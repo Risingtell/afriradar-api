@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS payments_created ON payments (created_at);
 CREATE INDEX IF NOT EXISTS payments_tx ON payments (tx);
 
+CREATE TABLE IF NOT EXISTS channels (
+  network TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  pay_to TEXT NOT NULL,
+  token_program TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  last_activity_at INTEGER NOT NULL,
+  receiver_authorizer TEXT NOT NULL,
+  caller_identity TEXT NOT NULL,
+  token TEXT NOT NULL,
+  PRIMARY KEY (network, channel_id)
+);
+
 CREATE TABLE IF NOT EXISTS kv (
   ns TEXT NOT NULL,
   k TEXT NOT NULL,
