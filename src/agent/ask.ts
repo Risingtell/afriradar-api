@@ -143,7 +143,7 @@ export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: 
       if (bill.total > ceiling) bill.total = ceiling; // the channel would refuse more; never ask for it
       return { answer: answer.replace(/\s*[–—]\s*/g, ", "), week: await q.latestWeek(db), bill, steps: step };
     }
-    messages.push({ role: "assistant", content: turn.content, tool_calls: turn.toolCalls });
+    messages.push({ role: "assistant", content: turn.content ?? "", tool_calls: turn.toolCalls });
     for (const call of turn.toolCalls) {
       const tool = TOOLS[call.function.name];
       let result: unknown;
