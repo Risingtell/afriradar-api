@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+keys/
+*.pem
+*.dat
+.wrangler/
+.dev.vars
+SUBMISSION.md
+VIDEO_SCRIPT.md
+DEMO_SCRIPT.md
+PLAN.md
+NOTES.md
