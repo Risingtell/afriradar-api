@@ -43,6 +43,19 @@ describe("ingest", () => {
     expect(() => parseFile(text, "bond")).toThrow(/money-market row/);
   });
 
+  it("tells apart two funds SEC listed under one name in the same week, like AfriRadar does", () => {
+    const rows = parseFile(`${HEADER}
+2026-08-21,shariah,,Same Fund,A,A,1,,,,,,1,,,,,,s
+2026-08-21,shariah,,Same Fund,B,B,2,,,,,,1,,,,,,s
+2026-08-28,shariah,,Same Fund,B,B,2,,,,,,1,,,,,,s
+`, "shariah");
+    expect(rows.map((r) => `${r.week} ${r.key} ${r.manager}`)).toEqual([
+      "2026-08-21 shariah/same-fund A",
+      "2026-08-21 shariah/same-fund-2 B",
+      "2026-08-28 shariah/same-fund B",
+    ]);
+  });
+
   it("rejects a malformed yield instead of storing it", () => {
     expect(() => parseFile(`${HEADER}\n2026-10-02,bond,,X Fund,M,M,1,,abc,0.1,,,1,,,,,,s\n`, "bond")).toThrow(/not a number/);
   });

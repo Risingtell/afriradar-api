@@ -33,11 +33,16 @@ export function parseFile(text: string, expected: Category): FundWeek[] {
   const rows = parseCsv(text).map(fromCsvRow);
   const wrong = rows.find((r) => r.category !== expected);
   if (wrong) throw new Error(`${expected} file holds a ${wrong.category} row (${wrong.name})`);
-  const keys = new Set<string>();
+  // SEC sometimes lists two funds under one name in a week. AfriRadar (sec_nav.assign_keys) tells
+  // them apart by sheet order, the second becoming "-2"; doing the same keeps ids identical to the site's.
+  const used = new Map<string, Set<string>>();
   for (const r of rows) {
-    const id = `${r.key}@${r.week}`;
-    if (keys.has(id)) throw new Error(`duplicate fund in one week: ${id}`);
-    keys.add(id);
+    const week = used.get(r.week) ?? new Set<string>();
+    used.set(r.week, week);
+    let key = r.key;
+    for (let n = 2; week.has(key); n++) key = `${r.key}-${n}`;
+    week.add(key);
+    if (key !== r.key) Object.assign(r, { key, slug: key.split("/")[1] });
   }
   return rows;
 }

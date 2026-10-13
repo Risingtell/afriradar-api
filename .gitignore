@@ -13,3 +13,6 @@ VIDEO_SCRIPT.md
 DEMO_SCRIPT.md
 PLAN.md
 NOTES.md
+spike-worker/
+*.log
+.wrangler-backfill.sql

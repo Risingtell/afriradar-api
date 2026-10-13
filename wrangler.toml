@@ -1,0 +1,24 @@
+name = "afriradar-api"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+TREASURY = "CEunt52v96nuGTroYhigYhVQyZbDpaWZ69g6isL4BQT8"
+DATA_BASE_URL = "https://afriradar.pages.dev"
+AI_MODEL = "@cf/openai/gpt-oss-120b"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "afriradar-api"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[ai]
+binding = "AI"
+
+[triggers]
+crons = ["17 6 * * *"]
+
+[observability]
+enabled = true
