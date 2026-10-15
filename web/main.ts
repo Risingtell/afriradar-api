@@ -52,9 +52,13 @@ async function loadCatalog() {
     .map((p) => `<div><span class="tag ${p.scheme === "upto" ? "tag--devnet" : "tag--live"}">${esc(p.scheme === "upto" ? "metered, capped" : "fixed price")}</span><span class="price">${esc(p.price)}${p.scheme === "upto" ? " max" : ""}</span><p class="route">${esc(p.method)} ${esc(p.path)}</p><p>${esc(p.summary)}</p></div>`)
     .join("");
   $<HTMLSelectElement>("category").innerHTML = c.categories.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
-  const o = (await (await fetch("/v1/overview")).json()) as { funds: number; weeksOnFile: number };
+  const o = (await (await fetch("/v1/overview")).json()) as { week: string; funds: number; categories: { navNgn: number; unitholders: number }[] };
+  const nav = o.categories.reduce((a, x) => a + x.navNgn, 0);
+  const holders = o.categories.reduce((a, x) => a + x.unitholders, 0);
   $("st-funds").textContent = String(o.funds);
-  $("st-weeks").textContent = String(o.weeksOnFile);
+  $("st-nav").textContent = `₦${(nav / 1e12).toFixed(2)}trn`;
+  $("st-holders").textContent = `${(holders / 1e6).toFixed(1)}m`;
+  $("st-week").textContent = new Date(`${o.week}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 // ---------- ledger ----------
@@ -62,7 +66,6 @@ async function loadLedger() {
   try {
     const l = (await (await fetch("/v1/payments?limit=25")).json()) as { settled: { payments: number; usdc: number; payers: number }; recent: LedgerRow[] };
     $("st-payments").textContent = String(l.settled.payments);
-    $("st-usdc").textContent = l.settled.usdc.toFixed(4);
     $("ledger-totals").innerHTML = `<span><b>${l.settled.payments}</b> settled</span><span><b>${l.settled.usdc.toFixed(6)}</b> USDC</span><span><b>${l.settled.payers}</b> paying wallets</span>`;
     $("ledger-rows").innerHTML = l.recent.length
       ? l.recent
