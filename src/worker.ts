@@ -20,6 +20,7 @@ export type Env = {
   AI: { run: (model: string, input: object) => Promise<unknown> };
   FACILITATOR_KEY: string; // JSON byte array, devnet fee payer
   AUTHORIZER_KEY: string; // JSON byte array, signs upto claim vouchers
+  DEMO_BUYER_KEY?: string; // JSON byte array, funded devnet wallet for the no-wallet demo
   TREASURY: string; // payTo address
   RPC_URL: string;
   DATA_BASE_URL: string; // https://afriradar.com
@@ -55,6 +56,7 @@ async function build(env: Env): Promise<Built> {
     authorizer,
     rpcUrl: env.RPC_URL,
     readChain: chainReader(jsonRpc(env.RPC_URL), env.TREASURY),
+    demoSigner: env.DEMO_BUYER_KEY ? await signerFrom(env.DEMO_BUYER_KEY) : undefined,
   });
   return { app, upto, db };
 }

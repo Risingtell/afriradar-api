@@ -10,6 +10,9 @@ TREASURY = "CEunt52v96nuGTroYhigYhVQyZbDpaWZ69g6isL4BQT8"
 DATA_BASE_URL = "https://afriradar.com"
 AI_MODEL = "@cf/openai/gpt-oss-120b"
 
+[assets]
+directory = "public"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "afriradar-api"

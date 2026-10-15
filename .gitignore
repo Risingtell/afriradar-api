@@ -17,3 +17,5 @@ spike-worker/
 *.log
 .wrangler-backfill.sql
 .wrangler-secrets.json
+public/app.js
+public/app.js.map

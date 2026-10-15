@@ -7,7 +7,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "build:web": "esbuild web/main.ts --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --outfile=public/app.js",
+    "deploy": "npm run build:web && wrangler deploy"
   },
   "dependencies": {
     "@scure/base": "^2.4.0",
@@ -26,6 +28,9 @@
     "@cloudflare/workers-types": "^5.20261012.1",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",
+    "@wallet-standard/app": "^1.1.1",
+    "@wallet-standard/base": "^1.1.1",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^8.3.4",

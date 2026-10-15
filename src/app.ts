@@ -8,12 +8,13 @@ import type { Network } from "@x402/core/types";
 import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/hono";
 import { ExactSvmScheme as ExactServer } from "@x402/svm/exact/server";
 import { UptoSvmScheme as UptoServer } from "@x402/svm/upto/server";
-import type { MessagePartialSigner } from "@solana/kit";
+import type { MessagePartialSigner, TransactionSigner } from "@solana/kit";
 import { ask, AskError, type Llm } from "./agent/ask.js";
 import { NETWORK, PRODUCTS, USDC_DEVNET, usd, type ProductId } from "./catalog.js";
 import type { Db } from "./db.js";
 import { CATEGORIES, isCategory } from "./data/model.js";
 import * as q from "./data/queries.js";
+import { mountDemo } from "./demo.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
 
 export type Deps = {
@@ -27,6 +28,8 @@ export type Deps = {
   readChain: (signature: string) => Promise<ChainPayment>;
   explorer?: (sig: string) => string;
   now?: () => Date;
+  /** Funded devnet wallet behind the no-wallet demo. Its payments are labelled demo in the ledger. */
+  demoSigner?: TransactionSigner;
 };
 
 const explorerDefault = (sig: string) => `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
@@ -130,7 +133,8 @@ export async function createApp(deps: Deps) {
     const totals = await db.first<{ n: number; micro: number; payers: number }>("SELECT count(*) AS n, coalesce(sum(CAST(amount AS INTEGER)), 0) AS micro, count(DISTINCT payer) AS payers FROM payments WHERE status = 'settled'");
     return c.json({
       settled: { payments: totals?.n ?? 0, usdc: (totals?.micro ?? 0) / 1e6, payers: totals?.payers ?? 0 },
-      recent: rows.map((r) => ({ ...r, usdc: Number(r.amount) / 1e6, explorer: r.tx ? explorer(r.tx) : null })),
+      recent: rows.map((r) => ({ ...r, usdc: Number(r.amount) / 1e6, demo: !!deps.demoSigner && r.payer === deps.demoSigner.address, explorer: r.tx ? explorer(r.tx) : null })),
+      demoWallet: deps.demoSigner?.address ?? null,
       verify: "Every tx above is a Solana devnet transaction. Run `npx afriradar verify` to recount them from the chain.",
     });
   });
@@ -145,6 +149,20 @@ export async function createApp(deps: Deps) {
     await record({ id: `${tx}:settled`, tx, route: row.route, scheme: row.scheme, amount: chain.received.toString(), status: "settled", detail: "redeemed" });
     return serveData(c, new URL(row.route, "https://x").pathname, new URL(row.route, "https://x").searchParams);
   });
+
+  // Read-only RPC relay for browser buyers: they need a blockhash and account reads to build a
+  // payment, and the public devnet RPC rate-limits browsers hard. Allow-listed reads only, so the
+  // relay cannot send transactions or leak the keyed RPC URL.
+  const RPC_READS = new Set(["getLatestBlockhash", "getAccountInfo", "getMultipleAccounts", "getBalance", "getTokenAccountsByOwner", "getTokenAccountBalance", "getMinimumBalanceForRentExemption", "getSignatureStatuses", "getSlot"]);
+  app.post("/rpc", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { method?: string } | { method?: string }[] | null;
+    const calls = Array.isArray(body) ? body : body ? [body] : [];
+    if (!calls.length || calls.length > 10 || calls.some((x) => !RPC_READS.has(String(x?.method)))) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32601, message: `relay allows only: ${[...RPC_READS].join(", ")}` } }, 400);
+    const res = await fetch(deps.rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+  });
+
+  if (deps.demoSigner) mountDemo(app, { db, signer: deps.demoSigner, rpcUrl: deps.rpcUrl, explorer, now });
 
   // ---------- paid ----------
   app.use(paymentMiddleware(routes, resourceServer));

@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AfriRadar Data API: Nigerian fund data, paid per request on Solana</title>
+<meta name="description" content="SEC Nigeria weekly NAV and yield data for 216 funds, sold one request at a time over x402. Pay a fraction of a cent in USDC on Solana, or ask the AI analyst and pay only for what it reads.">
+<meta property="og:title" content="AfriRadar Data API">
+<meta property="og:description" content="Nigerian fund data, paid per request in USDC on Solana with x402.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<a class="skip" href="#try">Skip to the live console</a>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="logo" href="/">AfriRadar<span>API</span></a>
+    <nav aria-label="Main">
+      <a href="#try">Try it</a>
+      <a href="#how">How it works</a>
+      <a href="#prices">Prices</a>
+      <a href="#ledger">Ledger</a>
+      <a href="#build">Build</a>
+      <a href="https://github.com/Risingtell/afriradar-api">GitHub</a>
+      <span class="tag tag--devnet">Solana devnet</span>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="band band--brand">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div>
+          <p class="eyebrow">x402 on Solana &middot; SEC Nigeria data</p>
+          <h1 class="h-xl">Nigerian fund data. <span class="hl">Pay per question.</span></h1>
+          <p class="lead">Every week SEC Nigeria publishes the price, size and yield of every collective investment scheme in the country. This API sells that data one request at a time. Your wallet pays a fraction of a cent in USDC on Solana, with no account, no API key and no subscription. Ask the AI analyst a question and you pay only for the data it reads and the words it writes.</p>
+          <a class="btn btn--light" href="#try">Ask a question</a>
+          <a class="btn btn--ghost" href="#build">npx afriradar</a>
+        </div>
+        <aside class="proof-card" aria-live="polite">
+          <p class="eyebrow" style="margin:0">Latest payment <span class="tag tag--live" id="proof-tag">checking</span></p>
+          <dl>
+            <dt>Paid</dt><dd id="proof-amount">loading</dd>
+            <dt>For</dt><dd id="proof-route">loading</dd>
+            <dt>When</dt><dd id="proof-when">loading</dd>
+            <dt>Tx</dt><dd><a id="proof-tx" href="#ledger">loading</a></dd>
+          </dl>
+        </aside>
+      </div>
+      <div class="stats" aria-label="Live figures">
+        <div><b id="st-payments">-</b><span>payments settled</span></div>
+        <div><b id="st-usdc">-</b><span>USDC earned</span></div>
+        <div><b id="st-funds">216</b><span>funds covered</span></div>
+        <div><b id="st-weeks">91</b><span>SEC weeks on file</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band--ink" id="try">
+    <div class="wrap">
+      <p class="eyebrow">Live console <span class="tag tag--live">real payments</span> <span class="tag tag--devnet">devnet USDC</span></p>
+      <h2 class="h-l">Try it now</h2>
+      <p class="lead muted">Every button here makes a real payment on Solana devnet and shows you the transaction. Use our demo wallet with no setup, or connect your own Phantom or Solflare set to devnet.</p>
+
+      <div class="console">
+        <div class="controls">
+          <div class="seg" role="group" aria-label="What to buy">
+            <button type="button" id="mode-ask" aria-pressed="true">Ask the analyst</button>
+            <button type="button" id="mode-buy" aria-pressed="false">Buy raw data</button>
+          </div>
+
+          <div id="ask-fields">
+            <div class="field">
+              <label for="question">Your question</label>
+              <textarea id="question" maxlength="500">Which naira money market fund has the highest year-to-date yield, and how does AIICO Money Market Fund compare?</textarea>
+              <div class="chips" id="presets">
+                <button type="button">Which dollar fund pays the most this year, and who manages it?</button>
+                <button type="button">Is Stanbic IBTC Money Market Fund above or below the median money market yield?</button>
+                <button type="button">How has AIICO Money Market Fund's yield moved since January 2025?</button>
+                <button type="button">Which category has the most unitholders?</button>
+              </div>
+            </div>
+            <p class="small muted">You authorize at most $0.05. The bill is $0.001 plus each dataset the analyst buys plus AI tokens. The rest of the deposit comes back in the same settlement. If the analyst fails, you pay nothing.</p>
+          </div>
+
+          <div id="buy-fields" hidden>
+            <div class="field">
+              <label for="product">Product</label>
+              <select id="product">
+                <option value="top">Top funds in a category ($0.002)</option>
+                <option value="category">Every fund in a category ($0.002)</option>
+                <option value="fund">One fund, last 13 weeks ($0.001)</option>
+                <option value="history">One fund, full history ($0.005)</option>
+                <option value="compare">Compare funds ($0.003)</option>
+              </select>
+            </div>
+            <div class="field" id="f-category">
+              <label for="category">Category</label>
+              <select id="category"></select>
+            </div>
+            <div class="field" id="f-fund" hidden>
+              <label for="fund">Fund (free search)</label>
+              <input id="fund" list="fund-list" value="money-market/aiico-money-market-fund" autocomplete="off">
+              <datalist id="fund-list"></datalist>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Pay with</label>
+            <div class="seg" role="group" aria-label="Pay with">
+              <button type="button" id="pay-demo" aria-pressed="true">Demo wallet</button>
+              <button type="button" id="pay-own" aria-pressed="false">My wallet</button>
+            </div>
+            <div id="own-wallet" hidden>
+              <div id="wallet-buttons"></div>
+              <p class="wallet-line" id="wallet-line">Set your wallet to devnet. Get free devnet USDC at <a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a>. You need no SOL: the facilitator pays the fee.</p>
+            </div>
+            <p class="wallet-line" id="demo-line">Demo wallet pays. Limited to a few runs an hour per visitor.</p>
+          </div>
+
+          <button class="btn btn--gold" id="run" type="button">Pay and run</button>
+        </div>
+
+        <div class="output" aria-live="polite">
+          <div class="out-head">
+            <span class="eyebrow" style="margin:0">Result</span>
+            <span class="out-status" id="status">Ready. Nothing has been paid yet.</span>
+          </div>
+          <div id="result">
+            <p class="muted">The answer, the itemized bill and the Solana transaction appear here.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band--paper" id="how">
+    <div class="wrap">
+      <p class="eyebrow">How it works</p>
+      <h2 class="h-l">Four steps, all on chain</h2>
+      <ol class="steps">
+        <li><h3 class="h-m">402</h3>Your request comes back <code>402 Payment Required</code> with the price, the USDC mint and the payee. No account, no key.</li>
+        <li><h3 class="h-m">Sign</h3>Your wallet signs a USDC transfer for a fixed-price product. For a question it signs a deposit into a Solana Foundation payment channel, capped at $0.05.</li>
+        <li><h3 class="h-m">Settle</h3>AfriRadar's own facilitator checks the payment and settles it on Solana. For a question it claims only the itemized bill; the channel refunds the rest.</li>
+        <li><h3 class="h-m">Deliver</h3>You get the data with the transaction in the <code>PAYMENT-RESPONSE</code> header. An error means no charge, and a paid but unconfirmed request is checked on chain before the reply.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band" id="prices">
+    <div class="wrap">
+      <p class="eyebrow">Prices <span class="tag tag--live">read live from /v1</span></p>
+      <h2 class="h-l">What it costs</h2>
+      <div class="grid3" id="price-grid"></div>
+      <p class="small muted" style="margin-top:1rem">Free: <code>GET /v1</code> catalog, <code>/v1/overview</code>, <code>/v1/search?q=</code>, <code>/v1/payments</code> ledger.</p>
+    </div>
+  </section>
+
+  <section class="band band--paper">
+    <div class="wrap">
+      <p class="eyebrow">Who it is for</p>
+      <h2 class="h-l">Four ways in</h2>
+      <div class="who">
+        <div><span class="n">01</span><p class="role">Evaluator</p><h3 class="h-m">Check every claim</h3>Run the console with the demo wallet, open the transaction, then run <code>npx afriradar verify</code> to recount the ledger from the chain.</div>
+        <div><span class="n">02</span><p class="role">Developer</p><h3 class="h-m">Three lines of code</h3><code>npm i afriradar</code>, pass any Solana signer, call <code>api.top("money-market")</code>. Spend caps are enforced before signing.</div>
+        <div><span class="n">03</span><p class="role">AI agent</p><h3 class="h-m">Tools that pay</h3><code>afriradar mcp</code> gives an agent 8 tools. Each paid result carries its transaction and the session spend against a budget you set.</div>
+        <div><span class="n">04</span><p class="role">Investor</p><h3 class="h-m">Ask in plain English</h3>Which fund pays most, who manages it, how a yield moved. The analyst answers only from SEC figures and names the week.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band--ink" id="ledger">
+    <div class="wrap">
+      <p class="eyebrow">Public ledger <span class="tag tag--live">auto-refresh</span></p>
+      <h2 class="h-l">Every payment, with its transaction</h2>
+      <div class="ledger-totals" id="ledger-totals"></div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>When (UTC)</th><th>Status</th><th>Scheme</th><th>USDC</th><th>Request</th><th>Payer</th><th>Tx</th></tr></thead>
+          <tbody id="ledger-rows"><tr><td colspan="7">Loading</td></tr></tbody>
+        </table>
+      </div>
+      <p class="small muted">Deposit rows are the $0.05 a question locks up front; the settled row is what was actually charged, and the channel refunds the difference. Rows marked demo were paid by our demo wallet, not a customer. Recount it yourself: <code>npx afriradar verify</code>.</p>
+    </div>
+  </section>
+
+  <section class="band" id="build">
+    <div class="wrap">
+      <p class="eyebrow">Build with it</p>
+      <h2 class="h-l">CLI, SDK and MCP</h2>
+      <div class="cols2">
+        <div>
+          <h3 class="h-m">Terminal</h3>
+<pre class="code">npx afriradar wallet --new
+# fund it at faucet.circle.com (Solana Devnet)
+npx afriradar top money-market --limit 5
+npx afriradar ask "Which dollar fund pays the most?"
+npx afriradar verify</pre>
+        </div>
+        <div>
+          <h3 class="h-m">Code</h3>
+<pre class="code">import { createAfriRadar, loadSigner } from "afriradar";
+
+const api = createAfriRadar({ signer: await loadSigner(), budget: 0.1 });
+const { data, receipt } = await api.top("money-market", { limit: 3 });
+console.log(data.funds[0].name, receipt.explorer);</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band--paper">
+    <div class="wrap">
+      <p class="eyebrow">Boundary</p>
+      <h2 class="h-l">What this is, and is not</h2>
+      <div class="cols2">
+        <div><h3 class="h-m">Live now</h3><ul>
+          <li>SEC Nigeria weekly NAV data for 216 funds, January 2025 to the latest week, refreshed daily from <a href="https://afriradar.com">afriradar.com</a>.</li>
+          <li>Real x402 payments on Solana devnet: fixed-price transfers and capped payment channels.</li>
+          <li>Our own facilitator, a public ledger, and a chain verifier anyone can run.</li>
+        </ul></div>
+        <div><h3 class="h-m">Not yet</h3><ul>
+          <li>Mainnet. Payments use free devnet USDC while the service is tested.</li>
+          <li>Advice. This is data. The analyst does not tell anyone to buy or sell.</li>
+          <li>Other countries. Nigeria first; the same pipeline fits any regulator that publishes weekly files.</li>
+        </ul></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    AfriRadar Data API by Rising Technology, Kano. Data: SEC Nigeria weekly valuation reports via <a href="https://afriradar.com">afriradar.com</a>. Code: <a href="https://github.com/Risingtell/afriradar-api">GitHub</a>, MIT. Package: <a href="https://www.npmjs.com/package/afriradar">npm</a>.
+  </div>
+</footer>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
