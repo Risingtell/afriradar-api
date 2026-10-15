@@ -16,3 +16,4 @@ NOTES.md
 spike-worker/
 *.log
 .wrangler-backfill.sql
+.wrangler-secrets.json

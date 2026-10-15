@@ -2,6 +2,8 @@ name = "afriradar-api"
 main = "src/worker.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+routes = [{ pattern = "api.afriradar.com", custom_domain = true }]
 
 [vars]
 TREASURY = "CEunt52v96nuGTroYhigYhVQyZbDpaWZ69g6isL4BQT8"
@@ -11,7 +13,7 @@ AI_MODEL = "@cf/openai/gpt-oss-120b"
 [[d1_databases]]
 binding = "DB"
 database_name = "afriradar-api"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "b943f2c5-d52c-4426-aa8d-d16156472d49"
 migrations_dir = "migrations"
 
 [ai]
