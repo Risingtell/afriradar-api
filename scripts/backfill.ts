@@ -3,7 +3,7 @@
 import { CATEGORIES, type Category } from "../src/data/model.js";
 import { parseFile, upsertStatements } from "../src/data/ingest.js";
 
-const base = (process.argv[2] ?? "https://afriradar.pages.dev").replace(/\/$/, "");
+const base = (process.argv[2] ?? "https://afriradar.com").replace(/\/$/, "");
 const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
 let rows = 0;
 for (const [category, meta] of Object.entries(CATEGORIES) as [Category, (typeof CATEGORIES)[Category]][]) {

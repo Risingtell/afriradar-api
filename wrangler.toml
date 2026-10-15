@@ -7,7 +7,7 @@ routes = [{ pattern = "api.afriradar.com", custom_domain = true }]
 
 [vars]
 TREASURY = "CEunt52v96nuGTroYhigYhVQyZbDpaWZ69g6isL4BQT8"
-DATA_BASE_URL = "https://afriradar.pages.dev"
+DATA_BASE_URL = "https://afriradar.com"
 AI_MODEL = "@cf/openai/gpt-oss-120b"
 
 [[d1_databases]]
