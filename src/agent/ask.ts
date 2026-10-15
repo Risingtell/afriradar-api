@@ -106,6 +106,13 @@ export type AskBill = {
 
 export type AskResult = { answer: string; week: string | null; bill: AskBill; steps: number };
 
+/** House style for model output: no em or en dashes; plain hyphens and spaces instead of their non-breaking twins. */
+export const tidy = (s: string) =>
+  s
+    .replace(/\s*[\u2013\u2014]\s*/g, ", ")
+    .replace(/[\u2010\u2011]/g, "-")
+    .replace(/[\u00a0\u202f]/g, " ");
+
 const tokenPrice = (prompt: number, completion: number) => Math.ceil(((prompt + completion) * ASK_PRICING.perThousandTokens) / 1000);
 
 export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: number; maxSteps?: number } = {}): Promise<AskResult> {
@@ -141,7 +148,7 @@ export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: 
       const answer = (turn.content ?? "").trim();
       if (!answer) throw new AskError("AI model returned an empty answer", 502);
       if (bill.total > ceiling) bill.total = ceiling; // the channel would refuse more; never ask for it
-      return { answer: answer.replace(/\s*[–—]\s*/g, ", "), week: await q.latestWeek(db), bill, steps: step };
+      return { answer: tidy(answer), week: await q.latestWeek(db), bill, steps: step };
     }
     messages.push({ role: "assistant", content: turn.content ?? "", tool_calls: turn.toolCalls });
     for (const call of turn.toolCalls) {

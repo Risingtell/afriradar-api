@@ -126,7 +126,7 @@ export async function createApp(deps: Deps) {
   app.get("/v1/overview", async (c) => c.json(await q.overview(db)));
   app.get("/v1/search", async (c) => c.json({ results: await q.search(db, c.req.query("q") ?? "", Number(c.req.query("limit")) || 10) }));
   app.get("/v1/payments", async (c) => {
-    const rows = await db.all<Record<string, string>>("SELECT tx, route, scheme, amount, ceiling, payer, status, detail, created_at FROM payments ORDER BY created_at DESC LIMIT ?", Math.min(Number(c.req.query("limit")) || 50, 200));
+    const rows = await db.all<Record<string, string>>("SELECT tx, route, scheme, amount, ceiling, payer, status, detail, created_at FROM payments ORDER BY created_at DESC, id LIMIT ? OFFSET ?", Math.min(Number(c.req.query("limit")) || 50, 200), Math.max(Number(c.req.query("offset")) || 0, 0));
     const totals = await db.first<{ n: number; micro: number; payers: number }>("SELECT count(*) AS n, coalesce(sum(CAST(amount AS INTEGER)), 0) AS micro, count(DISTINCT payer) AS payers FROM payments WHERE status = 'settled'");
     return c.json({
       settled: { payments: totals?.n ?? 0, usdc: (totals?.micro ?? 0) / 1e6, payers: totals?.payers ?? 0 },

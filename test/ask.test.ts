@@ -73,7 +73,14 @@ describe("ask", () => {
   });
 
   it("strips em dashes from the answer", async () => {
-    const r = await ask(db, scripted(turn([], "Yields rose — slightly.")), "Did yields rise?");
+    const r = await ask(db, scripted(turn([], "Yields rose \u2014 slightly.")), "Did yields rise?");
     expect(r.answer).toBe("Yields rose, slightly.");
+  });
+});
+
+describe("tidy", () => {
+  it("turns non-breaking hyphens and spaces into plain ones", async () => {
+    const { tidy } = await import("../src/agent/ask.js");
+    expect(tidy("2026\u201110\u201102 at 16.98\u202f%")).toBe("2026-10-02 at 16.98 %");
   });
 });

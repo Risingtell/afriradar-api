@@ -1,0 +1,62 @@
+{
+  "name": "afriradar",
+  "version": "0.1.0",
+  "description": "Buy SEC Nigeria fund data per request, paid in USDC on Solana over x402. SDK, CLI and MCP server for the AfriRadar Data API.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Oluwasogo Ajala (Rising Technology)",
+  "homepage": "https://api.afriradar.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Risingtell/afriradar-api.git",
+    "directory": "packages/afriradar"
+  },
+  "keywords": [
+    "x402",
+    "solana",
+    "usdc",
+    "micropayments",
+    "nigeria",
+    "mutual-funds",
+    "sec-nigeria",
+    "mcp",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "afriradar": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./verify": {
+      "types": "./dist/verify.d.ts",
+      "import": "./dist/verify.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@scure/base": "^1.2.6",
+    "@solana/kit": "6.10.0",
+    "@x402/core": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "@x402/svm": "2.28.0",
+    "zod": "^3.25.0"
+  }
+}
