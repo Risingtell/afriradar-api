@@ -17,6 +17,8 @@ const PRODUCTS: Record<string, (p: Record<string, string>) => string> = {
   fund: (p) => `/v1/funds/${p.id ?? "money-market/aiico-money-market-fund"}`,
   history: (p) => `/v1/funds/${p.id ?? "money-market/aiico-money-market-fund"}/history`,
   compare: (p) => `/v1/compare?ids=${p.ids ?? "money-market/aiico-money-market-fund,money-market/first-ally-money-market-fund"}`,
+  kenya: () => "/v1/kenya/unit-trusts",
+  kenyaScheme: (p) => `/v1/kenya/unit-trusts/${/^[a-z0-9-]+$/.test(p.id ?? "") ? p.id : "sanlam"}`,
 };
 
 /** Counts a demo run against the per-IP hourly and global daily limits. One statement each, so concurrent isolates cannot overshoot by much. */

@@ -12,6 +12,7 @@ import { chainReader, createApp } from "./app.js";
 import { NETWORK } from "./catalog.js";
 import { d1, type Db } from "./db.js";
 import { ingest } from "./data/ingest.js";
+import { ingestKenya } from "./data/kenya.js";
 import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
 import { jsonRpc } from "./reconcile.js";
 
@@ -72,7 +73,8 @@ export default {
     return app.fetch(req, env, ctx);
   },
 
-  // Daily: pull the latest SEC week from AfriRadar, then close and reclaim abandoned payment channels.
+  // Daily: pull the latest SEC week and the Kenya history from AfriRadar, then close and reclaim
+  // abandoned payment channels.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const { upto, db } = await get(env);
     ctx.waitUntil(
@@ -82,6 +84,12 @@ export default {
           console.log("ingest", JSON.stringify(r.map((x) => [x.category, x.rows, x.weeks.at(-1)])));
         } catch (e) {
           console.error("ingest failed", e);
+        }
+        try {
+          const k = await ingestKenya(db, { baseUrl: env.DATA_BASE_URL });
+          console.log("kenya ingest", k.rows, k.quarters.at(-1));
+        } catch (e) {
+          console.error("kenya ingest failed", e); // Nigeria above is already stored; Kenya retries tomorrow
         }
         try {
           await upto.createRentCleanupManager(NETWORK as Network).cleanup();

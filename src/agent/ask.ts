@@ -4,6 +4,7 @@
 import { ASK_PRICING, PRODUCTS } from "../catalog.js";
 import type { Db } from "../db.js";
 import { CATEGORIES, isCategory } from "../data/model.js";
+import * as kenya from "../data/kenya.js";
 import * as q from "../data/queries.js";
 
 export type ChatMessage =
@@ -84,14 +85,41 @@ const TOOLS: Record<string, Tool> = {
     spec: { type: "function", function: { name: "compare_funds", description: `Costs ${PRODUCTS.compare.price} micro-USDC. Up to 5 funds side by side with 4 and 13 week changes.`, parameters: { type: "object", properties: { ids: { type: "array", items: idParam, maxItems: 5 } }, required: ["ids"] } } },
     run: (db, a) => q.compare(db, (Array.isArray(a.ids) ? a.ids : []).map(needId)),
   },
+  kenya_overview: {
+    price: 0,
+    spec: { type: "function", function: { name: "kenya_overview", description: "Free. Kenya: latest CMA quarter, number of unit trust schemes and their total assets in KES.", parameters: { type: "object", properties: {} } } },
+    run: (db) => kenya.kenyaOverview(db),
+  },
+  kenya_search: {
+    price: 0,
+    spec: { type: "function", function: { name: "kenya_search", description: "Free. Find Kenyan unit trust scheme ids by name words.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
+    run: (db, a) => kenya.searchKenya(db, String(a.query ?? ""), 10),
+  },
+  kenya_unit_trusts: {
+    price: PRODUCTS.kenya.price,
+    spec: { type: "function", function: { name: "kenya_unit_trusts", description: `Costs ${PRODUCTS.kenya.price} micro-USDC. Kenya: every unit trust scheme for the latest CMA quarter with assets (KES), change on the quarter and market share.`, parameters: { type: "object", properties: {} } } },
+    run: (db) => kenya.kenyaSchemes(db),
+  },
+  kenya_scheme_history: {
+    price: PRODUCTS.kenyaScheme.price,
+    spec: { type: "function", function: { name: "kenya_scheme_history", description: `Costs ${PRODUCTS.kenyaScheme.price} micro-USDC. Kenya: one unit trust scheme's quarterly assets since December 2023.`, parameters: { type: "object", properties: { id: { type: "string", description: "Scheme id like sanlam (from kenya_search)" } }, required: ["id"] } } },
+    run: async (db, a) => {
+      const id = String(a.id ?? "");
+      if (!/^[a-z0-9-]+$/.test(id)) throw new Error("id must be a scheme id like sanlam");
+      return (await kenya.kenyaScheme(db, id)) ?? { error: "no such scheme" };
+    },
+  },
 };
 
-const SYSTEM = `You are AfriRadar's fund analyst. You answer questions about Nigerian collective investment schemes using only the SEC Nigeria weekly NAV data your tools return.
+const SYSTEM = `You are AfriRadar's fund analyst. You answer questions about African investment funds using only the data your tools return: SEC Nigeria's weekly NAV report for Nigerian collective investment schemes, and CMA Kenya's quarterly statistical bulletin for Kenyan unit trust schemes.
 Rules:
 - Every number you state must come from a tool result in this conversation. Never guess or use outside knowledge for figures.
 - Yields are decimals: 0.2129 means 21.29%. yieldYtd is the year-to-date yield the manager reported, yieldWtd the week-to-date one.
-- Say which SEC week the figures are for.
-- Tools cost money from the user's budget. Use free tools (overview, search_funds) to plan, then buy only the data you need. Do not buy the same data twice.
+- Kenya data is quarterly assets under management per scheme (a manager's umbrella of funds), in Kenya shillings (KES). It has no yields or prices; never present a Kenyan figure as a yield. changeOnQuarter and marketShare are decimals too; AfriRadar works out changeOnQuarter from the two figures CMA prints.
+- Name a Kenya quarter by its end date, as in quarterLabel ("quarter ended 31 March 2026"). Never call it Q1, Q2 and so on: CMA names its bulletins by the quarter they are published in, which is a different quarter.
+- Nigerian figures are in naira (NGN) unless a field says USD. Never add or compare naira and shilling amounts directly.
+- Say which SEC week or CMA quarter the figures are for.
+- Tools cost money from the user's budget. Use free tools (overview, search_funds, kenya_overview, kenya_search) to plan, then buy only the data you need. Do not buy the same data twice.
 - If the data cannot answer the question, say so plainly.
 - This is data, not investment advice. Do not tell anyone to buy or sell.
 - Plain English, short paragraphs, no em dashes.`;

@@ -1,6 +1,7 @@
 // Shared test setup: a sqlite database loaded with the captured real AfriRadar CSVs.
 import { readFileSync, existsSync } from "node:fs";
 import { ingest } from "../src/data/ingest.js";
+import { ingestKenya } from "../src/data/kenya.js";
 import { CATEGORIES } from "../src/data/model.js";
 import { sqlite } from "../src/sqlite.js";
 
@@ -19,5 +20,6 @@ export async function loadedDb() {
   const db = sqlite();
   await ingest(db, { baseUrl: "https://afriradar.test", history: true, fetchImpl: fixtureFetch });
   await ingest(db, { baseUrl: "https://afriradar.test", fetchImpl: fixtureFetch });
+  await ingestKenya(db, { baseUrl: "https://afriradar.test", fetchImpl: fixtureFetch });
   return db;
 }

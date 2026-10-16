@@ -96,7 +96,10 @@ function setPressed(a: string, b: string, first: boolean) {
 function updateProductFields() {
   const p = $<HTMLSelectElement>("product").value;
   $("f-category").hidden = !(p === "top" || p === "category");
-  $("f-fund").hidden = !(p === "fund" || p === "history" || p === "compare");
+  $("f-fund").hidden = !(p === "fund" || p === "history" || p === "compare" || p === "kenyaScheme");
+  const fund = $<HTMLInputElement>("fund");
+  if (p === "kenyaScheme" && fund.value.includes("/")) fund.value = "sanlam";
+  if (p !== "kenyaScheme" && !fund.value.includes("/")) fund.value = "money-market/aiico-money-market-fund";
 }
 function status(text: string, kind: "" | "ok" | "bad" = "") {
   const s = $("status");
@@ -161,6 +164,8 @@ function requestFor(): { product: string; path: string; init?: RequestInit; para
     fund: `/v1/funds/${id}`,
     history: `/v1/funds/${id}/history`,
     compare: `/v1/compare?ids=${params.ids}`,
+    kenya: "/v1/kenya/unit-trusts",
+    kenyaScheme: `/v1/kenya/unit-trusts/${id}`,
   }[product] as string;
   return { product, path, params };
 }

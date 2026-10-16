@@ -16,6 +16,7 @@ NOTES.md
 spike-worker/
 *.log
 .wrangler-backfill.sql
+.wrangler-kenya.sql
 .wrangler-secrets.json
 public/app.js
 public/app.js.map

@@ -43,9 +43,19 @@ export const PRODUCTS = {
     summary: "Up to 5 funds side by side, with yield and NAV change over 4 and 13 weeks (?ids=a,b).",
     example: "/v1/compare?ids=money-market/aiico-money-market-fund,money-market/first-ally-money-market-fund",
   },
+  kenya: {
+    method: "GET", path: "/v1/kenya/unit-trusts", scheme: "exact", price: 2_000,
+    summary: "Kenya: every unit trust scheme for the latest CMA quarter, with assets under management, change on the quarter and market share.",
+    example: "/v1/kenya/unit-trusts",
+  },
+  kenyaScheme: {
+    method: "GET", path: "/v1/kenya/unit-trusts/:scheme", scheme: "exact", price: 1_000,
+    summary: "Kenya: one unit trust scheme's quarterly assets since December 2023, with the CMA bulletin for every quarter.",
+    example: "/v1/kenya/unit-trusts/sanlam",
+  },
   ask: {
     method: "POST", path: "/v1/ask", scheme: "upto", price: 50_000,
-    summary: "Ask a question in plain English. An AI analyst buys the data it needs and answers with sources. You authorize up to $0.05 and pay only for the data read and the AI tokens used.",
+    summary: "Ask a question in plain English about Nigerian or Kenyan funds. An AI analyst buys the data it needs and answers with sources. You authorize up to $0.05 and pay only for the data read and the AI tokens used.",
     example: '/v1/ask  {"question":"Which naira money market fund pays the most this year?"}',
   },
 } as const satisfies Record<string, Product>;

@@ -13,6 +13,7 @@ import { ask, AskError, type Llm } from "./agent/ask.js";
 import { NETWORK, PRODUCTS, USDC_DEVNET, usd, type ProductId } from "./catalog.js";
 import type { Db } from "./db.js";
 import { CATEGORIES, isCategory } from "./data/model.js";
+import * as kenya from "./data/kenya.js";
 import * as q from "./data/queries.js";
 import { mountDemo } from "./demo.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
@@ -115,19 +116,27 @@ export async function createApp(deps: Deps) {
     const week = await q.latestWeek(db);
     return c.json({
       name: "AfriRadar Data API",
-      about: "SEC Nigeria weekly NAV data for every collective investment scheme, sold per request over x402 on Solana.",
+      about: "African fund data from the regulators, sold per request over x402 on Solana: SEC Nigeria's weekly NAV report for every collective investment scheme, and CMA Kenya's quarterly assets for every unit trust scheme.",
       network: NETWORK,
       asset: { symbol: "USDC", mint: USDC_DEVNET, decimals: 6 },
       payTo: deps.treasury,
       dataWeek: week,
+      markets: [
+        { id: "nigeria", source: "SEC Nigeria weekly valuation report", frequency: "weekly", latest: week },
+        { id: "kenya", source: "CMA Kenya quarterly statistical bulletin", frequency: "quarterly", latest: await kenya.latestQuarter(db) },
+      ],
       categories: Object.entries(CATEGORIES).map(([id, m]) => ({ id, name: m.name })),
       free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/redeem/:tx"],
       products: Object.entries(PRODUCTS).map(([id, p]) => ({ id, method: p.method, path: p.path, scheme: p.scheme, price: usd(p.price), priceMicroUsdc: p.price, summary: p.summary, example: p.example })),
       failedPayments: "A request that errors is never charged. If a settlement is broadcast but unconfirmed, the server checks the chain before replying; anything still unresolved can be redeemed at /v1/redeem/:tx.",
     });
   });
-  app.get("/v1/overview", async (c) => c.json(await q.overview(db)));
-  app.get("/v1/search", async (c) => c.json({ results: await q.search(db, c.req.query("q") ?? "", Number(c.req.query("limit")) || 10) }));
+  app.get("/v1/overview", async (c) => c.json({ ...(await q.overview(db)), kenya: await kenya.kenyaOverview(db) }));
+  app.get("/v1/search", async (c) => {
+    const text = c.req.query("q") ?? "";
+    const limit = Number(c.req.query("limit")) || 10;
+    return c.json({ results: await q.search(db, text, limit), kenya: await kenya.searchKenya(db, text, limit) });
+  });
   app.get("/v1/payments", async (c) => {
     const rows = await db.all<Record<string, string>>("SELECT tx, route, scheme, amount, ceiling, payer, status, detail, created_at FROM payments ORDER BY created_at DESC, id LIMIT ? OFFSET ?", Math.min(Number(c.req.query("limit")) || 50, 200), Math.max(Number(c.req.query("offset")) || 0, 0));
     const totals = await db.first<{ n: number; micro: number; payers: number }>("SELECT count(*) AS n, coalesce(sum(CAST(amount AS INTEGER)), 0) AS micro, count(DISTINCT payer) AS payers FROM payments WHERE status = 'settled'");
@@ -190,10 +199,18 @@ export async function createApp(deps: Deps) {
       if (!ids.length || ids.length > 5) return c.json({ error: "ids must list 1 to 5 fund ids; you were not charged" }, 400);
       return c.json(await q.compare(db, ids));
     }
+    if (parts[1] === "kenya" && parts[2] === "unit-trusts" && parts.length === 3) {
+      const data = await kenya.kenyaSchemes(db);
+      return data.quarter ? c.json(data) : notFound("Kenya data");
+    }
+    if (parts[1] === "kenya" && parts[2] === "unit-trusts" && parts.length === 4) {
+      const data = await kenya.kenyaScheme(db, parts[3]);
+      return data ? c.json(data) : notFound("scheme");
+    }
     return notFound("product");
   }
 
-  for (const id of ["category", "fund", "history", "top", "compare"] as const) {
+  for (const id of ["category", "fund", "history", "top", "compare", "kenya", "kenyaScheme"] as const) {
     app.get(PRODUCTS[id].path, (c) => serveData(c, new URL(c.req.url).pathname, new URL(c.req.url).searchParams));
   }
 
@@ -201,11 +218,15 @@ export async function createApp(deps: Deps) {
     const body = (await c.req.json().catch(() => ({}))) as { question?: unknown };
     const result = await ask(db, deps.llm, String(body.question ?? ""), { ceiling: PRODUCTS.ask.price });
     setSettlementOverrides(c, { amount: String(result.bill.total) });
+    const usedKenya = result.bill.data.some((d) => d.tool.startsWith("kenya_"));
     return c.json({
       answer: result.answer,
       week: result.week,
+      ...(usedKenya ? { kenyaQuarter: await kenya.latestQuarter(db) } : {}),
       bill: { ...result.bill, totalUsdc: result.bill.total / 1e6, ceilingUsdc: result.bill.ceiling / 1e6 },
-      source: "SEC Nigeria weekly valuation reports of collective investment schemes, via afriradar.com",
+      source: usedKenya
+        ? "SEC Nigeria weekly valuation reports and CMA Kenya quarterly statistical bulletins, via afriradar.com"
+        : "SEC Nigeria weekly valuation reports of collective investment schemes, via afriradar.com",
       note: "Data, not investment advice.",
     });
   });

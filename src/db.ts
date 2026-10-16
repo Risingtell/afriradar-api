@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS kv (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (ns, k)
 );
+
+CREATE TABLE IF NOT EXISTS kenya_quarters (
+  key TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  name TEXT NOT NULL,
+  aum_kes INTEGER NOT NULL,
+  prev_aum_kes INTEGER,
+  change REAL,
+  share REAL NOT NULL,
+  source TEXT NOT NULL,
+  PRIMARY KEY (key, quarter)
+);
+CREATE INDEX IF NOT EXISTS kenya_quarters_quarter ON kenya_quarters (quarter);
 `;
 
 type D1Like = {

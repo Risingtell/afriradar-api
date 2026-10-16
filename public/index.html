@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AfriRadar Data API: African fund data, paid per request on Solana</title>
-<meta name="description" content="African fund data sold one request at a time over x402. Pay a fraction of a cent in USDC on Solana, or ask the AI analyst and pay only for what it reads. Starting with all 216 funds in SEC Nigeria's weekly report.">
+<meta name="description" content="African fund data sold one request at a time over x402. Pay a fraction of a cent in USDC on Solana, or ask the AI analyst and pay only for what it reads. Covers all 216 funds in SEC Nigeria's weekly report and every unit trust scheme in CMA Kenya's quarterly bulletin.">
 <meta property="og:title" content="AfriRadar Data API">
 <meta property="og:description" content="African fund data, paid for one question at a time. x402 on Solana.">
 <meta property="og:image" content="https://api.afriradar.com/og.png">
@@ -41,7 +41,7 @@
         <div>
           <p class="eyebrow">Data API &middot; x402 on Solana</p>
           <h1 class="h-xl">African fund data, paid for one question at a time.</h1>
-          <p class="lead">AfriRadar turns what African regulators publish about investment funds into clean data, and this API sells it per request. Your wallet pays a fraction of a cent in USDC on Solana: no account, no API key, no subscription. Ask the AI analyst a question and you pay only for the data it reads. We start with Nigeria, every fund in SEC Nigeria's weekly report, with other African markets next.</p>
+          <p class="lead">AfriRadar turns what African regulators publish about investment funds into clean data, and this API sells it per request. Your wallet pays a fraction of a cent in USDC on Solana: no account, no API key, no subscription. Ask the AI analyst a question and you pay only for the data it reads. Nigeria: every fund in SEC Nigeria's weekly report. Kenya: every unit trust scheme in CMA Kenya's quarterly bulletin. More African markets next.</p>
           <a class="btn" href="#try">Ask a question</a>
           <a class="btn btn--ghost" href="#build">npx afriradar</a>
         </div>
@@ -100,6 +100,8 @@
                 <option value="fund">One fund, last 13 weeks ($0.001)</option>
                 <option value="history">One fund, full history ($0.005)</option>
                 <option value="compare">Compare funds ($0.003)</option>
+                <option value="kenya">Kenya: every unit trust scheme ($0.002)</option>
+                <option value="kenyaScheme">Kenya: one scheme, every quarter ($0.001)</option>
               </select>
             </div>
             <div class="field" id="f-category">
