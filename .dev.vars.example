@@ -1,0 +1,6 @@
+# Copy to .dev.vars for `npx wrangler dev`. Devnet only. Never commit the real file.
+# Keys are 64-number JSON arrays, as written by `npx tsx scripts/keygen.ts` into keys/*.json.
+FACILITATOR_KEY=[...]   # pays network fees for settlements; fund it with devnet SOL (faucet.solana.com)
+AUTHORIZER_KEY=[...]    # signs the upto payment-channel claims for /v1/ask
+DEMO_BUYER_KEY=[...]    # optional: funded devnet wallet behind the no-wallet demo
+RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY   # any keyed devnet RPC; the public one refuses Workers

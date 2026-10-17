@@ -1,10 +1,12 @@
 # afriradar
 
-Buy SEC Nigeria fund data one request at a time, paid in USDC on Solana with [x402](https://x402.org). No account, no API key, no subscription: your wallet pays a fraction of a cent and the data comes back with the Solana transaction that paid for it.
+Buy African fund data (SEC Nigeria weekly, CMA Kenya quarterly) one request at a time, paid in USDC on Solana with [x402](https://x402.org). No account, no API key, no subscription: your wallet pays a fraction of a cent and the data comes back with the Solana transaction that paid for it.
 
-The data is the SEC Nigeria weekly valuation report for every collective investment scheme (216 funds, every week since January 2025), published by [AfriRadar](https://afriradar.com). The API runs at `https://api.afriradar.com` on Solana **devnet**, so payments use free test USDC.
+The data is the SEC Nigeria weekly valuation report for every collective investment scheme (216 funds, every week since January 2025) and CMA Kenya's quarterly assets for every unit trust scheme (43 schemes, every quarter since December 2023), published by [AfriRadar](https://afriradar.com). The API runs at `https://api.afriradar.com` on Solana **devnet**, so payments use free test USDC.
 
 ## Try it in two minutes
+
+The npm package is not published yet. Until it is, run the same commands from a clone of this repo with `node packages/afriradar/dist/cli.js` in place of `npx afriradar` (see the [main README](../../README.md#try-it)).
 
 ```bash
 npx afriradar catalog                      # free: products and prices
@@ -30,6 +32,8 @@ npx afriradar ask "Which dollar fund has the highest yield this year, and who ma
 | `history <id>` | `GET /v1/funds/:category/:slug/history` | 0.005 |
 | `top <c>` | `GET /v1/top/:category` | 0.002 |
 | `compare <id> ...` | `GET /v1/compare?ids=` | 0.003 |
+| `kenya` | `GET /v1/kenya/unit-trusts` | 0.002 |
+| `kenya <scheme>` | `GET /v1/kenya/unit-trusts/:scheme` | 0.001 |
 | `ask "<q>"` | `POST /v1/ask` | metered, at most 0.05 |
 | `catalog`, `search`, `overview` | `GET /v1`, `/v1/search`, `/v1/overview` | free |
 

@@ -103,7 +103,8 @@ export function createAfriRadar(opts: AfriRadarOptions) {
     // free
     catalog: () => free<Record<string, unknown>>("/v1"),
     overview: () => free<Record<string, unknown>>("/v1/overview"),
-    search: (q: string, limit = 10) => free<{ results: { id: string; name: string; manager: string; category: Category }[] }>(`/v1/search?q=${enc(q)}&limit=${limit}`),
+    search: (q: string, limit = 10) =>
+      free<{ results: { id: string; name: string; manager: string; category: Category }[]; kenya?: { id: string; name: string; market: "kenya" }[] }>(`/v1/search?q=${enc(q)}&limit=${limit}`),
     payments: (limit = 50) => free<Record<string, unknown>>(`/v1/payments?limit=${limit}`),
     // paid
     category: (c: Category) => paid<Record<string, unknown>>(`/v1/categories/${enc(c)}`),
@@ -111,6 +112,13 @@ export function createAfriRadar(opts: AfriRadarOptions) {
     history: (id: string) => paid<Record<string, unknown>>(`${fundPath(id)}/history`),
     top: (c: Category, o: { by?: RankBy; limit?: number } = {}) => paid<Record<string, unknown>>(`/v1/top/${enc(c)}?by=${o.by ?? "yield_ytd"}&limit=${o.limit ?? 10}`),
     compare: (ids: string[]) => paid<Record<string, unknown>>(`/v1/compare?ids=${ids.map(enc).join(",")}`),
+    /** Kenya: every unit trust scheme for the latest CMA quarter (assets in KES, quarterly, per scheme). */
+    kenya: () => paid<Record<string, unknown>>("/v1/kenya/unit-trusts"),
+    /** Kenya: one unit trust scheme's quarterly history, id like "sanlam". */
+    kenyaScheme: (id: string) => {
+      if (!/^[a-z0-9-]+$/.test(id)) throw new AfriRadarError(`Kenya scheme id must look like "sanlam", got "${id}"`, 400);
+      return paid<Record<string, unknown>>(`/v1/kenya/unit-trusts/${id}`);
+    },
     /** Metered: authorizes up to $0.05 on chain, settles only the itemized bill. */
     ask: (question: string) =>
       paid<{ answer: string; week: string; bill: { total: number; data: { tool: string; price: number }[]; tokens: { prompt: number; completion: number; price: number } } }>("/v1/ask", {

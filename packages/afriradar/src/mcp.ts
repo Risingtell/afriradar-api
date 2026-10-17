@@ -18,7 +18,9 @@ export async function runMcp(opts: { baseUrl?: string; rpcUrl?: string } = {}) {
     return text({ ...r, spentThisSession: api.spent, budget });
   };
 
-  server.tool("afriradar_search", "Free. Find Nigerian fund ids by name or manager.", { query: z.string() }, async ({ query }) => text(await api.search(query)));
+  server.tool("afriradar_search", "Free. Find Nigerian fund ids and Kenyan unit trust scheme ids by name.", { query: z.string() }, async ({ query }) => text(await api.search(query)));
+  server.tool("afriradar_kenya", "Paid $0.002 USDC. Kenya: every unit trust scheme for the latest CMA quarter, assets in KES (quarterly, per scheme, no yields).", {}, async () => paid(api.kenya()));
+  server.tool("afriradar_kenya_scheme", "Paid $0.001 USDC. Kenya: one unit trust scheme's quarterly assets since December 2023. id like sanlam", { id: z.string().regex(/^[a-z0-9-]+$/) }, async ({ id }) => paid(api.kenyaScheme(id)));
   server.tool("afriradar_overview", "Free. Latest SEC week and a summary of every fund category.", {}, async () => text(await api.overview()));
   server.tool(
     "afriradar_top",

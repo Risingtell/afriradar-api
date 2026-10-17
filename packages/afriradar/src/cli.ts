@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// afriradar: buy SEC Nigeria fund data from the terminal, paid in USDC on Solana devnet.
+// afriradar: buy African fund data (SEC Nigeria, CMA Kenya) from the terminal, paid in USDC on Solana devnet.
 import { createSolanaRpc, address } from "@solana/kit";
 import { createAfriRadar, AfriRadarError, DEFAULT_BASE_URL, DEVNET_RPC, type Category, type RankBy } from "./client.js";
 import { verify, USDC_DEVNET } from "./verify.js";
 import { createWallet, DEFAULT_WALLET, loadSigner } from "./wallet.js";
 
-const HELP = `afriradar: SEC Nigeria fund data, paid per request in USDC on Solana (devnet)
+const HELP = `afriradar: African fund data (SEC Nigeria weekly, CMA Kenya quarterly), paid per request in USDC on Solana (devnet)
 
 Free
   afriradar catalog                     products, prices, payee, data week
-  afriradar search <words>              find fund ids by name or manager
+  afriradar search <words>              find fund ids (Nigeria) and scheme ids (Kenya) by name
   afriradar overview                    categories, fund counts, median yields
   afriradar verify                      recount every payment from the chain and check the API's ledger
 
@@ -19,6 +19,8 @@ Paid (your wallet pays; each prints its Solana transaction)
   afriradar fund <id>                   one fund, last 13 weeks              $0.001
   afriradar history <id>                full weekly history                  $0.005
   afriradar compare <id> <id> ...       up to 5 funds side by side           $0.003
+  afriradar kenya                       Kenya: every unit trust scheme, latest quarter   $0.002
+  afriradar kenya <scheme>              Kenya: one scheme, every quarter     $0.001
   afriradar ask "<question>"            AI analyst, you pay for what it reads (max $0.05)
 
 Wallet
@@ -110,7 +112,15 @@ async function main() {
       return out(JSON.stringify(await api.overview(), null, 2), await api.overview());
     case "search": {
       const r = await api.search(rest.join(" "));
-      return out(r.results.map((f) => `${f.id.padEnd(55)} ${f.manager}`).join("\n") || "no match", r);
+      const lines = [
+        ...r.results.map((f) => `${f.id.padEnd(55)} ${f.manager}`),
+        ...(r.kenya ?? []).map((s) => `${`kenya ${s.id}`.padEnd(55)} ${s.name}`),
+      ];
+      return out(lines.join("\n") || "no match", r);
+    }
+    case "kenya": {
+      const r = rest[0] ? await api.kenyaScheme(rest[0]) : await api.kenya();
+      return out(JSON.stringify(r.data, null, 2) + receipt(r.receipt), r);
     }
     case "top": {
       const r = await api.top(rest[0] as Category, { by: flags.by as RankBy | undefined, limit: Number(flags.limit) || 10 });
