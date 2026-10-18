@@ -60,6 +60,18 @@ bill: base 0.001 + kenya_unit_trusts 0.002 + 6,873 AI tokens 0.003437 = 0.006437
 
 The analyst refuses a tool call that would push the bill past the ceiling, and a refused call is never billed. See [`src/agent/ask.ts`](src/agent/ask.ts).
 
+### Proof: Solana enforces the cap, not just our code
+
+A buyer should not have to trust our server. [`scripts/cap-proof.ts`](scripts/cap-proof.ts) opens a real `upto` channel with a 0.01 USDC ceiling, then plays a dishonest server: with our own payee and authorizer keys it signs a voucher for the ceiling plus 1 micro-USDC and sends `settle_and_seal` straight to the payment-channel program, skipping every check in our code. The program rejects it on chain. Then the honest 0.003 USDC bill settles and the rest of the deposit goes back to the buyer.
+
+| Step | Result | Transaction |
+|---|---|---|
+| Buyer deposits the 0.01 ceiling into the channel | confirmed | [2tZFgT...](https://explorer.solana.com/tx/2tZFgTTQyzbqQUnCvJfcw6bjoQCmgq8NKiEaUjDePxdsfu7ygrB7WxmktdNVP11L6mJGyjUJhgEgZxXi3J9xaDVj?cluster=devnet) |
+| Payee tries to take 10,001 micro-USDC | **failed on chain**, program error 235 | [3rQ1ea...](https://explorer.solana.com/tx/3rQ1eaaojMQ8i66S9fDg3gt12gnFiE2x4Enok8WRHZJ12uCzxB3JzTp1Jhc6zGv5444NVpttTGjxwHoGQTu6qkfG?cluster=devnet) |
+| Honest bill of 3,000 settles, 7,000 refunded | confirmed | [5U2FkB...](https://explorer.solana.com/tx/5U2FkBbrUvocAyiEoixLnyNvzNY96S3uVc7WtPA1GreM1N5pxc6C1GsvaPz2oYkbeHEZXSefQ8xZ16zTAUGfdFo8?cluster=devnet) |
+
+To show the amount is the only reason for the failure, the script also simulates the identical transaction at 3,000 (accepted), at exactly the 10,000 ceiling (accepted) and at 10,001 (rejected, error 235). Across three runs the buyer's balance fell by exactly 3 × 0.003 USDC. The full record is in [`docs/cap-proof.json`](docs/cap-proof.json); run it yourself with `npx tsx scripts/cap-proof.ts`.
+
 ## When a payment fails
 
 - **The request fails** (unknown fund, bad input, AI unavailable): the handler answers 4xx or 5xx and the payment is cancelled. You are never charged for an error.

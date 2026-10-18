@@ -1,0 +1,65 @@
+{
+  "network": "solana-devnet",
+  "program": "CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX",
+  "ceilingMicroUsdc": 10000,
+  "deposit": {
+    "tx": "2tZFgTTQyzbqQUnCvJfcw6bjoQCmgq8NKiEaUjDePxdsfu7ygrB7WxmktdNVP11L6mJGyjUJhgEgZxXi3J9xaDVj",
+    "explorer": "https://explorer.solana.com/tx/2tZFgTTQyzbqQUnCvJfcw6bjoQCmgq8NKiEaUjDePxdsfu7ygrB7WxmktdNVP11L6mJGyjUJhgEgZxXi3J9xaDVj?cluster=devnet",
+    "success": true
+  },
+  "boundary": [
+    {
+      "amountMicroUsdc": 3000,
+      "simulated": "accepted",
+      "error": null,
+      "logs": []
+    },
+    {
+      "amountMicroUsdc": 10000,
+      "simulated": "accepted",
+      "error": null,
+      "logs": []
+    },
+    {
+      "amountMicroUsdc": 10001,
+      "simulated": "rejected",
+      "error": {
+        "InstructionError": [
+          1,
+          {
+            "Custom": 235
+          }
+        ]
+      },
+      "logs": [
+        "Program CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX failed: custom program error: 0xeb"
+      ]
+    }
+  ],
+  "channel": "7GvNaegnbbZid58CESHi9r49vnu5oWNhy9eP2ig3PHP",
+  "attack": {
+    "tried": "settle 10001 micro-USDC from a 10000 deposit",
+    "tx": "3rQ1eaaojMQ8i66S9fDg3gt12gnFiE2x4Enok8WRHZJ12uCzxB3JzTp1Jhc6zGv5444NVpttTGjxwHoGQTu6qkfG",
+    "explorer": "https://explorer.solana.com/tx/3rQ1eaaojMQ8i66S9fDg3gt12gnFiE2x4Enok8WRHZJ12uCzxB3JzTp1Jhc6zGv5444NVpttTGjxwHoGQTu6qkfG?cluster=devnet",
+    "rejected": true,
+    "error": {
+      "InstructionError": [
+        1,
+        {
+          "Custom": 235
+        }
+      ]
+    },
+    "logs": [
+      "Program CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX failed: custom program error: 0xeb"
+    ]
+  },
+  "honest": {
+    "charged": "3000",
+    "tx": "5U2FkBbrUvocAyiEoixLnyNvzNY96S3uVc7WtPA1GreM1N5pxc6C1GsvaPz2oYkbeHEZXSefQ8xZ16zTAUGfdFo8",
+    "explorer": "https://explorer.solana.com/tx/5U2FkBbrUvocAyiEoixLnyNvzNY96S3uVc7WtPA1GreM1N5pxc6C1GsvaPz2oYkbeHEZXSefQ8xZ16zTAUGfdFo8?cluster=devnet",
+    "success": true,
+    "error": null
+  },
+  "verdict": "PASS: the program refused a claim above the ceiling, and the honest bill settled with the rest refunded"
+}
