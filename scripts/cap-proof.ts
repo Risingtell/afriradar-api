@@ -83,7 +83,7 @@ async function sendUnchecked(instructions: Ixs) {
     const { value } = await rpc.getSignatureStatuses([sig as Signature]).send();
     const s = value[0];
     if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") {
-      const full = await rpc.getTransaction(sig as Signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }).send();
+      const full = await rpc.getTransaction(sig as Signature, { encoding: "json", maxSupportedTransactionVersion: 0, commitment: "confirmed" }).send();
       return { sig, err: s.err, logs: full?.meta?.logMessages ?? [] };
     }
     await new Promise((r) => setTimeout(r, 1000));
