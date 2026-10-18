@@ -131,6 +131,14 @@ export async function kenyaSchemes(db: Db) {
     changeOnQuarter: before ? total / before - 1 : null,
     note: "Per scheme (a fund manager's umbrella of unit trust funds), quarterly. CMA publishes no prices or yields. totalAumKes is the sum of the schemes' figures; CMA's printed total can differ from it by rounding.",
     source: rows[0]?.source ?? null,
+    // Ranked here, not by the reader: a model sorting 43 rows by hand once put Arvocap (+38.7%)
+    // above Jaza (+39.8%). New schemes have no change and are left out.
+    fastestGrowing: rows
+      .filter((r) => r.change !== null)
+      .sort((a, b) => (b.change as number) - (a.change as number))
+      .slice(0, 5)
+      .map((r) => ({ id: r.key, name: r.name, changeOnQuarter: r.change, aumKes: r.aum_kes })),
+    largest: rows.slice(0, 5).map((r) => ({ id: r.key, name: r.name, aumKes: r.aum_kes, marketShare: r.share })),
     rows: rows.map(scheme),
   };
 }

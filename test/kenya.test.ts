@@ -44,6 +44,9 @@ describe("Kenya queries on real CMA data", () => {
     const apollo = k.rows.find((r) => r.id === "apollo");
     expect(apollo?.changeOnQuarter).toBeLessThan(0); // CMA printed this fall as "12.2%"
     expect(k.changeOnQuarter).toBeCloseTo(851_708_510_285 / 756_266_044_500 - 1, 6);
+    // Ranked by the server: Jaza (+39.8%) comes before Arvocap (+38.7%), new schemes are left out.
+    expect(k.fastestGrowing.map((r) => r.id)).toEqual(["faida", "cpf", "ziidi-shariah-money-market", "gulfcap", "jaza"]);
+    expect(k.largest.map((r) => r.id)).toEqual(["sanlam", "standard-investment", "cic", "britam", "ncba"]);
   });
   it("keeps one history across a rename", async () => {
     const h = await kenya.kenyaScheme(db, "nabo-africa"); // "Nabo Capital Ltd" until Sep 2024
