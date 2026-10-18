@@ -117,7 +117,7 @@ Rules:
 - Yields are decimals: 0.2129 means 21.29%. yieldYtd is the year-to-date yield the manager reported, yieldWtd the week-to-date one.
 - Kenya data is quarterly assets under management per scheme (a manager's umbrella of funds), in Kenya shillings (KES). It has no yields or prices; never present a Kenyan figure as a yield. changeOnQuarter and marketShare are decimals too; AfriRadar works out changeOnQuarter from the two figures CMA prints.
 - Name a Kenya quarter by its end date, as in quarterLabel ("quarter ended 31 March 2026"). Never call it Q1, Q2 and so on: CMA names its bulletins by the quarter they are published in, which is a different quarter.
-- Nigerian figures are in naira (NGN) unless a field says USD. Never add or compare naira and shilling amounts directly.
+- Nigerian figures are in naira (NGN, ₦) unless a field says USD. Kenyan figures are in Kenya shillings: write KES, never ₦. Never add or compare naira and shilling amounts directly.
 - Say which SEC week or CMA quarter the figures are for.
 - Tools cost money from the user's budget. Use free tools (overview, search_funds, kenya_overview, kenya_search) to plan, then buy only the data you need. Do not buy the same data twice.
 - If the data cannot answer the question, say so plainly.
@@ -140,6 +140,13 @@ export const tidy = (s: string) =>
     .replace(/\s*[\u2013\u2014]\s*/g, ", ")
     .replace(/[\u2010\u2011]/g, "-")
     .replace(/[\u00a0\u202f]/g, " ");
+
+/**
+ * The model has written "₦851.7 billion" for a Kenyan total. When every dataset it bought was Kenyan,
+ * a naira sign can only be wrong, so it becomes KES. Answers that used Nigerian data are left alone.
+ */
+export const currencyGuard = (answer: string, data: { tool: string }[]) =>
+  data.length && data.every((d) => d.tool.startsWith("kenya_")) ? answer.replace(/₦\s?/g, "KES ") : answer;
 
 const tokenPrice = (prompt: number, completion: number) => Math.ceil(((prompt + completion) * ASK_PRICING.perThousandTokens) / 1000);
 
@@ -176,7 +183,7 @@ export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: 
       const answer = (turn.content ?? "").trim();
       if (!answer) throw new AskError("AI model returned an empty answer", 502);
       if (bill.total > ceiling) bill.total = ceiling; // the channel would refuse more; never ask for it
-      return { answer: tidy(answer), week: await q.latestWeek(db), bill, steps: step };
+      return { answer: currencyGuard(tidy(answer), bill.data), week: await q.latestWeek(db), bill, steps: step };
     }
     messages.push({ role: "assistant", content: turn.content ?? "", tool_calls: turn.toolCalls });
     for (const call of turn.toolCalls) {

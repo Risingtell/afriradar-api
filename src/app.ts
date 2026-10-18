@@ -98,7 +98,21 @@ export async function createApp(deps: Deps) {
   const routes: RoutesConfig = Object.fromEntries(
     (Object.entries(PRODUCTS) as [ProductId, (typeof PRODUCTS)[ProductId]][]).map(([, p]) => [
       `${p.method} ${p.path}`,
-      { accepts: { scheme: p.scheme, price: usd(p.price), network: NETWORK as Network, payTo: deps.treasury }, description: p.summary, mimeType: "application/json" },
+      {
+        accepts: {
+          scheme: p.scheme,
+          price: usd(p.price),
+          network: NETWORK as Network,
+          payTo: deps.treasury,
+          // The upto client stamps validAfter with the buyer's own clock unless we send one, and the
+          // facilitator refuses a payment whose validAfter is ahead of the server's clock. A phone or
+          // PC running even a second fast could never pay for /v1/ask. 0 means "valid now"; the
+          // payment still expires, and each channel can only be opened once.
+          ...(p.scheme === "upto" ? { extra: { validAfter: 0 } } : {}),
+        },
+        description: p.summary,
+        mimeType: "application/json",
+      },
     ]),
   );
 

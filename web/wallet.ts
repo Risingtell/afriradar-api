@@ -2,7 +2,10 @@
 // x402 client expects. The wallet signs its part of a transaction the facilitator will co-sign.
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import { address, getTransactionDecoder, getTransactionEncoder, type TransactionPartialSigner } from "@solana/kit";
+import {
+  address, assertIsTransactionWithinSizeLimit, getCompiledTransactionMessageDecoder, getTransactionDecoder, getTransactionEncoder,
+  type Blockhash, type Transaction, type TransactionModifyingSigner, type TransactionWithLifetime,
+} from "@solana/kit";
 
 export const DEVNET_CHAIN = "solana:devnet";
 
@@ -20,27 +23,33 @@ export function onWalletsChange(cb: () => void): () => void {
   return () => { a(); b(); };
 }
 
-export async function connect(wallet: Wallet): Promise<{ account: WalletAccount; signer: TransactionPartialSigner }> {
+// A modifying signer, because wallets may change the transaction while signing: Phantom and Solflare
+// append Lighthouse guard instructions that protect the user. The x402 facilitator allows up to three
+// Lighthouse (or Memo) instructions after the payment, so we hand the wallet's version back as signed
+// and let the facilitator judge it; anything it does not allow comes back as a clear "not charged".
+export async function connect(wallet: Wallet): Promise<{ account: WalletAccount; signer: TransactionModifyingSigner }> {
   const { accounts } = await (wallet.features["standard:connect"] as Connect).connect();
   const account = accounts.find((a) => a.chains.some((ch) => ch.startsWith("solana:"))) ?? accounts[0];
   if (!account) throw new Error(`${wallet.name} returned no account`);
   const sign = wallet.features["solana:signTransaction"] as SignTx;
   const enc = getTransactionEncoder();
   const dec = getTransactionDecoder();
+  const msgDec = getCompiledTransactionMessageDecoder();
   const me = address(account.address);
-  const signer: TransactionPartialSigner = {
+  const signer: TransactionModifyingSigner = {
     address: me,
-    async signTransactions(txs) {
+    async modifyAndSignTransactions(txs) {
       const out = await sign.signTransaction(...txs.map((tx) => ({ account, transaction: new Uint8Array(enc.encode(tx)), chain: DEVNET_CHAIN })));
       return out.map(({ signedTransaction }, i) => {
-        const signed = dec.decode(signedTransaction);
-        const before = txs[i].messageBytes;
-        const after = signed.messageBytes;
-        // A wallet that rewrites the transaction (adds fees, swaps the payer) breaks the facilitator's checks.
-        if (before.length !== after.length || before.some((b, j) => b !== after[j])) throw new Error(`${wallet.name} changed the transaction while signing; try another wallet`);
-        const sig = signed.signatures[me];
-        if (!sig) throw new Error(`${wallet.name} did not sign`);
-        return { [me]: sig };
+        const signed = dec.decode(signedTransaction) as Transaction;
+        if (!signed.signatures[me]) throw new Error(`${wallet.name} did not sign`);
+        const original = txs[i] as Transaction & Partial<TransactionWithLifetime>;
+        const blockhash = msgDec.decode(signed.messageBytes).lifetimeToken as Blockhash;
+        const before = original.lifetimeConstraint as { blockhash?: string; lastValidBlockHeight?: bigint } | undefined;
+        const lifetimeConstraint = { blockhash, lastValidBlockHeight: before?.blockhash === blockhash && before.lastValidBlockHeight !== undefined ? before.lastValidBlockHeight : 2n ** 63n };
+        const result = { ...signed, lifetimeConstraint };
+        assertIsTransactionWithinSizeLimit(result);
+        return result;
       });
     },
   };

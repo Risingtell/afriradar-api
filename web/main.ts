@@ -4,7 +4,7 @@ import { x402Client } from "@x402/core/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
-import type { TransactionPartialSigner } from "@solana/kit";
+import type { TransactionModifyingSigner } from "@solana/kit";
 import type { Wallet } from "@wallet-standard/base";
 import { connect, onWalletsChange, solanaWallets } from "./wallet.js";
 
@@ -20,7 +20,7 @@ type LedgerRow = { tx: string | null; route: string; scheme: string; amount: str
 
 let mode: "ask" | "buy" = "ask";
 let payWith: "demo" | "own" = "demo";
-let own: { wallet: Wallet; signer: TransactionPartialSigner; address: string } | null = null;
+let own: { wallet: Wallet; signer: TransactionModifyingSigner; address: string } | null = null;
 
 // ---------- small safe markdown: escape first, then bold and pipe tables ----------
 function renderAnswer(md: string): string {

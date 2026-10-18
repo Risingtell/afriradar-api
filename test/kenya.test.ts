@@ -1,6 +1,6 @@
 // Kenya: AfriRadar's CMA Kenya CSV (captured from afriradar.com, Dec 2023 to Mar 2026) into the API.
 import { describe, expect, it, beforeAll } from "vitest";
-import { ask, type Llm, type LlmTurn, type ToolCall } from "../src/agent/ask.js";
+import { ask, currencyGuard, type Llm, type LlmTurn, type ToolCall } from "../src/agent/ask.js";
 import { ASK_PRICING, PRODUCTS } from "../src/catalog.js";
 import type { Db } from "../src/db.js";
 import * as kenya from "../src/data/kenya.js";
@@ -72,6 +72,14 @@ describe("the analyst on Kenya", () => {
     const r = await ask(db, llm, "Which Kenyan unit trust is the biggest?");
     expect(r.bill.data).toEqual([{ tool: "kenya_unit_trusts", args: {}, price: PRODUCTS.kenya.price }]);
     expect(r.bill.total).toBe(ASK_PRICING.base + PRODUCTS.kenya.price + Math.ceil((2400 * ASK_PRICING.perThousandTokens) / 1000));
+  });
+
+  it("never prints a naira sign on an answer built only from Kenyan data", async () => {
+    const turns = [turn([call("kenya_unit_trusts", {})]), turn([], "The market held about ₦851.7 billion at the end of March 2026.")];
+    let i = 0;
+    const r = await ask(db, async () => turns[i++], "How big is the Kenyan unit trust market?");
+    expect(r.answer).toBe("The market held about KES 851.7 billion at the end of March 2026.");
+    expect(currencyGuard("₦6.67trn in money market funds", [{ tool: "top_funds" }])).toBe("₦6.67trn in money market funds");
   });
 
   it("does not bill a refused scheme id", async () => {
