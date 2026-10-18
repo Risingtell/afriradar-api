@@ -1,7 +1,7 @@
 {
   "name": "afriradar",
   "version": "0.1.0",
-  "description": "Buy SEC Nigeria fund data per request, paid in USDC on Solana over x402. SDK, CLI and MCP server for the AfriRadar Data API.",
+  "description": "Buy African fund data (SEC Nigeria weekly, CMA Kenya quarterly) per request, paid in USDC on Solana over x402. SDK, CLI and MCP server for the AfriRadar Data API.",
   "type": "module",
   "license": "MIT",
   "author": "Oluwasogo Ajala (Rising Technology)",
