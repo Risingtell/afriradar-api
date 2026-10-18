@@ -82,6 +82,14 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 export const quarterLabel = (iso: string | null) =>
   iso ? `quarter ended ${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}` : null;
 
+/** End of the quarter before an ISO quarter end: 2026-03-31 gives 2025-12-31. */
+export const previousQuarterEnd = (iso: string) => {
+  let y = Number(iso.slice(0, 4));
+  let m = Number(iso.slice(5, 7)) - 3;
+  if (m <= 0) { y -= 1; m += 12; }
+  return `${y}-${String(m).padStart(2, "0")}-${new Date(Date.UTC(y, m, 0)).getUTCDate()}`;
+};
+
 const scheme = (r: KenyaRow) => ({
   id: r.key,
   name: r.name,
@@ -125,11 +133,12 @@ export async function kenyaSchemes(db: Db) {
     market: "kenya",
     quarter,
     quarterLabel: quarterLabel(quarter),
+    previousQuarterLabel: quarter ? quarterLabel(previousQuarterEnd(quarter)) : null,
     currency: "KES",
     schemes: rows.length,
     totalAumKes: total,
     changeOnQuarter: before ? total / before - 1 : null,
-    note: "Per scheme (a fund manager's umbrella of unit trust funds), quarterly. CMA publishes no prices or yields. totalAumKes is the sum of the schemes' figures; CMA's printed total can differ from it by rounding.",
+    note: "Per scheme (a fund manager's umbrella of unit trust funds), quarterly. CMA publishes each scheme's assets for this quarter and the one before, and no prices or yields. totalAumKes, changeOnQuarter, marketShare, fastestGrowing and largest are calculated by AfriRadar from those figures; CMA's printed total can differ from the sum by rounding.",
     source: rows[0]?.source ?? null,
     // Ranked here, not by the reader: a model sorting 43 rows by hand once put Arvocap (+38.7%)
     // above Jaza (+39.8%). New schemes have no change and are left out.

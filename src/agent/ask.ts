@@ -98,7 +98,9 @@ const TOOLS: Record<string, Tool> = {
   kenya_unit_trusts: {
     price: PRODUCTS.kenya.price,
     spec: { type: "function", function: { name: "kenya_unit_trusts", description: `Costs ${PRODUCTS.kenya.price} micro-USDC. Kenya: every unit trust scheme for the latest CMA quarter with assets (KES), change on the quarter and market share.`, parameters: { type: "object", properties: {} } } },
-    run: (db) => kenya.kenyaSchemes(db),
+    // The bulletin's web address carries CMA's own issue name ("q2-2026" for the March 2026 quarter),
+    // which led the model to call the quarter "Q2". The analyst gets the data without it.
+    run: async (db) => ({ ...(await kenya.kenyaSchemes(db)), source: "CMA Kenya quarterly statistical bulletin" }),
   },
   kenya_scheme_history: {
     price: PRODUCTS.kenyaScheme.price,
@@ -106,7 +108,9 @@ const TOOLS: Record<string, Tool> = {
     run: async (db, a) => {
       const id = String(a.id ?? "");
       if (!/^[a-z0-9-]+$/.test(id)) throw new Error("id must be a scheme id like sanlam");
-      return (await kenya.kenyaScheme(db, id)) ?? { error: "no such scheme" };
+      const h = await kenya.kenyaScheme(db, id);
+      if (!h) return { error: "no such scheme" };
+      return { ...h, quarters: h.quarters.map(({ source: _s, ...q }) => ({ ...q, quarterLabel: kenya.quarterLabel(q.quarter) })) };
     },
   },
 };
@@ -117,6 +121,7 @@ Rules:
 - Yields are decimals: 0.2129 means 21.29%. yieldYtd is the year-to-date yield the manager reported, yieldWtd the week-to-date one.
 - Kenya data is quarterly assets under management per scheme (a manager's umbrella of funds), in Kenya shillings (KES). It has no yields or prices; never present a Kenyan figure as a yield. changeOnQuarter and marketShare are decimals too; AfriRadar works out changeOnQuarter from the two figures CMA prints.
 - For "fastest growing" or "largest" Kenyan schemes, use the fastestGrowing and largest lists the data already ranks; never re-rank the rows yourself.
+- CMA publishes only each Kenyan scheme's assets for this quarter and the one before. Growth figures, rankings, totals and market shares are AfriRadar's calculations from those figures: say "calculated by AfriRadar from CMA figures", never that CMA lists, ranks or reports them.
 - Name a Kenya quarter by its end date, as in quarterLabel ("quarter ended 31 March 2026"). Never call it Q1, Q2 and so on: CMA names its bulletins by the quarter they are published in, which is a different quarter.
 - Nigerian figures are in naira (NGN, ₦) unless a field says USD. Kenyan figures are in Kenya shillings: write KES, never ₦. Never add or compare naira and shilling amounts directly.
 - Say which SEC week or CMA quarter the figures are for.
