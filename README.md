@@ -81,9 +81,9 @@ To show the amount is the only reason for the failure, the script also simulates
 Every settlement is written to the public ledger. Anyone can recount it from the chain:
 
 ```
-node packages/afriradar/dist/cli.js verify
+npx afriradar verify
 ...
-matched         14 of 14 ledger rows found on chain for the exact amount
+matched         33 of 33 ledger rows found on chain for the exact amount
 OK: every payment the API claims is on chain.
 ```
 
@@ -91,18 +91,14 @@ OK: every payment the API claims is on chain.
 
 **In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Phantom, Solflare) with free devnet USDC from [faucet.circle.com](https://faucet.circle.com).
 
-**From a terminal**, with the CLI in this repo (Node 22 or later):
+**From a terminal** (Node 22 or later), with the [`afriradar`](https://www.npmjs.com/package/afriradar) package on npm:
 
 ```bash
-git clone https://github.com/Risingtell/afriradar-api && cd afriradar-api
-npm install
-npm run build -w afriradar
-
-node packages/afriradar/dist/cli.js catalog              # free
-node packages/afriradar/dist/cli.js search sanlam        # free: ids for Nigeria and Kenya
-node packages/afriradar/dist/cli.js wallet --new         # prints an address; fund it at faucet.circle.com (Solana Devnet)
-node packages/afriradar/dist/cli.js kenya                # 0.002 USDC, prints the Solana transaction
-node packages/afriradar/dist/cli.js ask "Which Kenyan unit trust schemes grew fastest last quarter?"
+npx afriradar catalog                      # free
+npx afriradar search sanlam                # free: ids for Nigeria and Kenya
+npx afriradar wallet --new                 # prints an address; fund it at faucet.circle.com (Solana Devnet)
+npx afriradar kenya                        # 0.002 USDC, prints the Solana transaction
+npx afriradar ask "Which Kenyan unit trust schemes grew fastest last quarter?"
 ```
 
 The same package is an SDK (`createAfriRadar`) and an MCP server (`afriradar mcp`) so any MCP-capable agent can buy data with its own wallet and a budget. See [packages/afriradar](packages/afriradar).

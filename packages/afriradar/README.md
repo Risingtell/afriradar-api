@@ -6,8 +6,6 @@ The data is the SEC Nigeria weekly valuation report for every collective investm
 
 ## Try it in two minutes
 
-The npm package is not published yet. Until it is, run the same commands from a clone of this repo with `node packages/afriradar/dist/cli.js` in place of `npx afriradar` (see the [main README](../../README.md#try-it)).
-
 ```bash
 npx afriradar catalog                      # free: products and prices
 npx afriradar search coronation            # free: find fund ids
