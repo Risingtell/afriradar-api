@@ -122,7 +122,7 @@ Rules:
 - Kenya data is quarterly assets under management per scheme (a manager's umbrella of funds), in Kenya shillings (KES). It has no yields or prices; never present a Kenyan figure as a yield. changeOnQuarter and marketShare are decimals too; AfriRadar works out changeOnQuarter from the two figures CMA prints.
 - For "fastest growing" or "largest" Kenyan schemes, use the fastestGrowing and largest lists the data already ranks; never re-rank the rows yourself.
 - CMA publishes only each Kenyan scheme's assets for this quarter and the one before. Growth figures, rankings, totals and market shares are AfriRadar's calculations from those figures: say "calculated by AfriRadar from CMA figures", never that CMA lists, ranks or reports them.
-- Name a Kenya quarter by its end date, as in quarterLabel ("quarter ended 31 March 2026"). Never call it Q1, Q2 and so on: CMA names its bulletins by the quarter they are published in, which is a different quarter.
+- Name every Kenya quarter by its end date only, as in quarterLabel: write "quarter ended 31 March 2026", and in table headings "AUM, 31 Mar 2026". No quarter numbers.
 - Nigerian figures are in naira (NGN, ₦) unless a field says USD. Kenyan figures are in Kenya shillings: write KES, never ₦. Never add or compare naira and shilling amounts directly.
 - Say which SEC week or CMA quarter the figures are for.
 - Tools cost money from the user's budget. Use free tools (overview, search_funds, kenya_overview, kenya_search) to plan, then buy only the data you need. Do not buy the same data twice.
@@ -153,6 +153,25 @@ export const tidy = (s: string) =>
  */
 export const currencyGuard = (answer: string, data: { tool: string }[]) =>
   data.length && data.every((d) => d.tool.startsWith("kenya_")) ? answer.replace(/₦\s?/g, "KES ") : answer;
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/**
+ * CMA names its bulletins by the quarter they come out in, so the model has written "Q2 2026" for the
+ * quarter ended 31 March 2026. In an answer built only from Kenyan data, a "Qn YYYY" that ends after the
+ * latest quarter we hold can only be CMA's naming, so it is rewritten as the end date of the quarter
+ * before. Anything else is left alone.
+ */
+export const quarterGuard = (answer: string, data: { tool: string }[], latest: string | null) => {
+  if (!latest || !data.length || !data.every((d) => d.tool.startsWith("kenya_"))) return answer;
+  return answer.replace(/\bQ([1-4])\s?(20\d\d)\b/g, (whole, n: string, y: string) => {
+    const calendarEnd = `${y}-${String(Number(n) * 3).padStart(2, "0")}`;
+    if (calendarEnd <= latest.slice(0, 7)) return whole;
+    let year = Number(y);
+    let month = Number(n) * 3 - 3;
+    if (month === 0) { year -= 1; month = 12; }
+    return `${new Date(Date.UTC(year, month, 0)).getUTCDate()} ${MONTHS_SHORT[month - 1]} ${year}`;
+  });
+};
 
 const tokenPrice = (prompt: number, completion: number) => Math.ceil(((prompt + completion) * ASK_PRICING.perThousandTokens) / 1000);
 
@@ -189,7 +208,7 @@ export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: 
       const answer = (turn.content ?? "").trim();
       if (!answer) throw new AskError("AI model returned an empty answer", 502);
       if (bill.total > ceiling) bill.total = ceiling; // the channel would refuse more; never ask for it
-      return { answer: currencyGuard(tidy(answer), bill.data), week: await q.latestWeek(db), bill, steps: step };
+      return { answer: quarterGuard(currencyGuard(tidy(answer), bill.data), bill.data, await kenya.latestQuarter(db)), week: await q.latestWeek(db), bill, steps: step };
     }
     messages.push({ role: "assistant", content: turn.content ?? "", tool_calls: turn.toolCalls });
     for (const call of turn.toolCalls) {

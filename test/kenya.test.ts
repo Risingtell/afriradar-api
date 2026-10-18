@@ -1,6 +1,6 @@
 // Kenya: AfriRadar's CMA Kenya CSV (captured from afriradar.com, Dec 2023 to Mar 2026) into the API.
 import { describe, expect, it, beforeAll } from "vitest";
-import { ask, currencyGuard, type Llm, type LlmTurn, type ToolCall } from "../src/agent/ask.js";
+import { ask, currencyGuard, quarterGuard, type Llm, type LlmTurn, type ToolCall } from "../src/agent/ask.js";
 import { ASK_PRICING, PRODUCTS } from "../src/catalog.js";
 import type { Db } from "../src/db.js";
 import * as kenya from "../src/data/kenya.js";
@@ -83,6 +83,14 @@ describe("the analyst on Kenya", () => {
     const r = await ask(db, async () => turns[i++], "How big is the Kenyan unit trust market?");
     expect(r.answer).toBe("The market held about KES 851.7 billion at the end of March 2026.");
     expect(currencyGuard("₦6.67trn in money market funds", [{ tool: "top_funds" }])).toBe("₦6.67trn in money market funds");
+  });
+
+  it("rewrites CMA's bulletin naming (Q2 2026) as the quarter's end date in Kenya-only answers", () => {
+    const k = [{ tool: "kenya_unit_trusts" }];
+    expect(quarterGuard("| Scheme | Q2 2026 AUM |", k, "2026-03-31")).toBe("| Scheme | 31 Mar 2026 AUM |");
+    expect(quarterGuard("growth since Q1 2026", k, "2026-03-31")).toBe("growth since Q1 2026"); // could be right, left alone
+    expect(quarterGuard("Q2 2026", [{ tool: "top_funds" }], "2026-03-31")).toBe("Q2 2026"); // Nigerian answers untouched
+    expect(quarterGuard("Q1 2026 bulletin", k, "2025-12-31")).toBe("31 Dec 2025 bulletin");
   });
 
   it("does not bill a refused scheme id", async () => {
