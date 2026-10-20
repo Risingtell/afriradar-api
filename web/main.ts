@@ -52,13 +52,16 @@ async function loadCatalog() {
     .map((p) => `<div><span class="tag ${p.scheme === "upto" ? "tag--devnet" : "tag--live"}">${esc(p.scheme === "upto" ? "metered, capped" : "fixed price")}</span><span class="price">${esc(p.price)}${p.scheme === "upto" ? " max" : ""}</span><p class="route">${esc(p.method)} ${esc(p.path)}</p><p>${esc(p.summary)}</p></div>`)
     .join("");
   $<HTMLSelectElement>("category").innerHTML = c.categories.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
-  const o = (await (await fetch("/v1/overview")).json()) as { week: string; funds: number; categories: { navNgn: number; unitholders: number }[] };
+  const o = (await (await fetch("/v1/overview")).json()) as { week: string; funds: number; categories: { navNgn: number }[]; kenya?: { quarter: string | null; schemes: number; aumKes: number } };
+  const day = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   const nav = o.categories.reduce((a, x) => a + x.navNgn, 0);
-  const holders = o.categories.reduce((a, x) => a + x.unitholders, 0);
   $("st-funds").textContent = String(o.funds);
   $("st-nav").textContent = `₦${(nav / 1e12).toFixed(2)}trn`;
-  $("st-holders").textContent = `${(holders / 1e6).toFixed(1)}m`;
-  $("st-week").textContent = new Date(`${o.week}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  $("st-week").textContent = day(o.week);
+  if (o.kenya?.quarter && o.kenya.schemes) {
+    $("st-kenya").textContent = `KES ${(o.kenya.aumKes / 1e9).toFixed(0)}bn`;
+    $("st-kenya-label").textContent = `in ${o.kenya.schemes} Kenyan schemes, quarter ended ${day(o.kenya.quarter)}`;
+  }
 }
 
 // ---------- ledger ----------

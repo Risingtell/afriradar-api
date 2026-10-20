@@ -1,6 +1,6 @@
 {
   "name": "afriradar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Buy African fund data (SEC Nigeria weekly, CMA Kenya quarterly) per request, paid in USDC on Solana over x402. SDK, CLI and MCP server for the AfriRadar Data API.",
   "type": "module",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "usdc",
     "micropayments",
     "nigeria",
+    "kenya",
     "mutual-funds",
     "sec-nigeria",
     "mcp",

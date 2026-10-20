@@ -4,7 +4,7 @@ African investment fund data, sold one request at a time over [x402](https://x40
 
 The data comes from the regulators:
 
-- **Nigeria:** the SEC's weekly valuation report for every collective investment scheme, 216 funds holding ₦9.84trn (week ended 2 October 2026), weekly since January 2025.
+- **Nigeria:** the SEC's weekly valuation report for every collective investment scheme, 217 funds holding ₦9.88trn (week ended 9 October 2026), weekly since January 2025.
 - **Kenya:** the Capital Markets Authority's quarterly statistical bulletin, assets under management for every unit trust scheme, 43 schemes holding KES 851.7bn (quarter ended 31 March 2026), quarterly since December 2023.
 
 Both are read, checked and published by [afriradar.com](https://afriradar.com). This API sells them per request.
@@ -84,7 +84,7 @@ Every settlement is written to the public ledger. Anyone can recount it from the
 ```
 npx afriradar verify
 ...
-matched         33 of 33 ledger rows found on chain for the exact amount
+matched         50 of 50 ledger rows found on chain for the exact amount
 OK: every payment the API claims is on chain.
 ```
 
@@ -114,7 +114,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 51 tests: data, Kenya, billing rules, facilitator storage
+npm test                 # 52 tests: data, Kenya, billing rules, facilitator storage
 npm run typecheck
 ```
 

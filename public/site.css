@@ -101,8 +101,9 @@ label { display: block; margin: 0 0 .45rem; font-size: .74rem; font-weight: 600;
 .blip { display: inline-block; width: .55rem; height: .55rem; margin-right: .45rem; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 4px rgba(242, 179, 61, .2); vertical-align: middle; }
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: clamp(2.5rem, 6vw, 4.5rem); border: 1px solid var(--line-dark); border-radius: var(--radius); overflow: hidden; background: var(--line-dark); }
 .stats div { padding: 1.2rem 1.35rem; background: var(--ink-2); }
-.stats b { display: block; font-size: clamp(1.6rem, 3.2vw, 2.5rem); line-height: 1.05; font-weight: 700; letter-spacing: -.03em; }
+.stats b { display: block; white-space: nowrap; font-size: clamp(1.6rem, 3.2vw, 2.5rem); line-height: 1.05; font-weight: 700; letter-spacing: -.03em; }
 .stats span { font-size: .82rem; color: var(--mist); }
+.stats div > span { display: block; line-height: 1.45; margin-top: .3rem; }
 
 /* console: the instrument */
 .console { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); border: 1px solid var(--line-dark); border-radius: var(--radius); overflow: hidden; background: var(--ink-2); }
@@ -184,6 +185,7 @@ pre.code { margin: 0; padding: 1.1rem 1.2rem; overflow-x: auto; border: 1px soli
 }
 @media (max-width: 560px) {
   body { font-size: 1rem; }
+  .stats b { font-size: 1.35rem; }
   .steps, .cols2, .grid3, .who, .markets { grid-template-columns: minmax(0, 1fr); }
   .site-head { position: static; }
   .site-head nav { gap: .2rem 1rem; }

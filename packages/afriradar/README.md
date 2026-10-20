@@ -2,7 +2,7 @@
 
 Buy African fund data (SEC Nigeria weekly, CMA Kenya quarterly) one request at a time, paid in USDC on Solana with [x402](https://x402.org). No account, no API key, no subscription: your wallet pays a fraction of a cent and the data comes back with the Solana transaction that paid for it.
 
-The data is the SEC Nigeria weekly valuation report for every collective investment scheme (216 funds, every week since January 2025) and CMA Kenya's quarterly assets for every unit trust scheme (43 schemes, every quarter since December 2023), published by [AfriRadar](https://afriradar.com). The API runs at `https://api.afriradar.com` on Solana **devnet**, so payments use free test USDC.
+The data is the SEC Nigeria weekly valuation report for every collective investment scheme (every week since January 2025) and CMA Kenya's quarterly assets for every unit trust scheme (43 schemes, every quarter since December 2023), published by [AfriRadar](https://afriradar.com). The API runs at `https://api.afriradar.com` on Solana **devnet**, so payments use free test USDC.
 
 ## Try it in two minutes
 
