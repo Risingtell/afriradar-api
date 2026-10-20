@@ -13,6 +13,7 @@ Both are read, checked and published by [afriradar.com](https://afriradar.com). 
 |---|---|
 | Live demo, no wallet needed | https://api.afriradar.com |
 | Demo video (2:51) | https://youtu.be/4r-gcgAvx74 |
+| Pitch deck (PDF, 12 slides) | https://api.afriradar.com/deck.pdf |
 | Catalog and prices (free JSON) | https://api.afriradar.com/v1 |
 | Public payment ledger | https://api.afriradar.com/v1/payments |
 | Network | Solana **devnet**, USDC mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
