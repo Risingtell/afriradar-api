@@ -9,14 +9,35 @@ The data comes from the regulators:
 
 Both are read, checked and published by [afriradar.com](https://afriradar.com). This API sells them per request.
 
+[![payments settled](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fpayments&query=%24.settled.payments&label=payments%20settled%20on%20Solana&color=1dbf8b)](https://api.afriradar.com/#ledger)
+[![visitor wallets](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fpayments&query=%24.visitors.wallets&label=visitor%20wallets%20that%20paid&color=1dbf8b)](https://api.afriradar.com/v1/payments)
+[![hourly checks passed](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fstatus&query=%24.last7d.passed&label=hourly%20payment%20checks%20passed%20(7d)&color=1dbf8b)](https://api.afriradar.com/v1/status)
+[![CI](https://github.com/Risingtell/afriradar-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Risingtell/afriradar-api/actions/workflows/ci.yml)
+
 | | |
 |---|---|
 | Live demo, no wallet needed | https://api.afriradar.com |
+| Verify it in five minutes | [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md) |
 | Demo video (2:51) | https://youtu.be/4r-gcgAvx74 |
 | Pitch deck (PDF, 12 slides) | https://api.afriradar.com/deck.pdf |
 | Catalog and prices (free JSON) | https://api.afriradar.com/v1 |
 | Public payment ledger | https://api.afriradar.com/v1/payments |
+| Live proof that Solana enforces the cap | https://api.afriradar.com/v1/proof/cap |
+| Hourly end-to-end payment check | https://api.afriradar.com/v1/status |
+| Hosted MCP server, paid tools over x402 | `https://api.afriradar.com/mcp` |
+| For language models and agents | [/llms.txt](https://api.afriradar.com/llms.txt), [/discovery/resources](https://api.afriradar.com/discovery/resources) |
 | Network | Solana **devnet**, USDC mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+
+## Judging criteria, mapped
+
+Best Use of x402 on Solana. Each claim links to something you can check.
+
+| Criterion | What is built | Check it |
+|---|---|---|
+| Meaningful integration of x402 and Solana | Both x402 schemes on Solana: `exact` for fixed-price data, `upto` on the Solana Foundation payment-channel program for the metered analyst. Our own facilitator runs in the Worker and pays every network fee. x402 also runs inside MCP (`@x402/mcp`), and every paid route declares x402 Bazaar discovery metadata. | Visitor `exact` payment [61YK61...](https://explorer.solana.com/tx/61YK61tHb5VoxX9bBZEzDjQqVerCSAsYrk4iBRQagLY7y8xeEzchczrSkdNsHcUx4mibvCdVniVTYCMwnXbq13xD?cluster=devnet); visitor `upto` deposit [5Vu8mr...](https://explorer.solana.com/tx/5Vu8mrpyFQ7pYtwMn2wabdj4bJsZWSAm1Rv77ypBFVpo7vz47pfkMGi7Qbin41cYUKj5C8WguNGY2VMJotKc7cJY?cluster=devnet) and settlement of 0.00613 with the rest refunded [5mwM8r...](https://explorer.solana.com/tx/5mwM8rYYaBMjRHi14tSTeDuthvPSWhV6uz74QzbGKmSSRgY9ZkGThHBTHE3e7ATYj1MpgQ4tbyX5yfHQBR9vTv1p?cluster=devnet); paid MCP tool call [3JTxW7...](https://explorer.solana.com/tx/3JTxW71bRBWVb6BNDDHQpvfXddChS42PBHj2eohNYnyTfAVQD6STmzRqbYo9wxUtb4egoqy7W4WPMUBGkpfDUTZg?cluster=devnet) |
+| Reliability of the payment-to-access flow | Payment settles before data leaves; a failed handler cancels the payment; a late confirmation is checked on chain before refusing; wallets that add safety instructions while signing are accepted. An hourly monitor pays through the real flow and publishes the result. | [/v1/status](https://api.afriradar.com/v1/status); recount the ledger from the chain on the [demo page](https://api.afriradar.com/#ledger) or with `npx afriradar verify` |
+| A compelling use case beyond a basic demo | Real regulator data from two countries (SEC Nigeria weekly, CMA Kenya quarterly), an AI analyst that buys only the data it needs inside a cap Solana enforces, and tools for agents (npm SDK, CLI, local and hosted MCP). Outside users have paid from their own wallets. | [Try to overcharge a buyer](https://api.afriradar.com/#proof); visitor payments in the [ledger](https://api.afriradar.com/v1/payments) (`visitors`) |
+| Clear documentation and sensible handling of failed payments | This README, [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md), [/llms.txt](https://api.afriradar.com/llms.txt). An error is never charged; a failed answer refunds the whole deposit; a failed payment keeps the facilitator's reason in the public ledger. | A question that failed, refunded in full: deposit [5VPjyF...](https://explorer.solana.com/tx/5VPjyFCiVGQzyxBg4p3S3VH4dYLXc4Wy44yD9ehpDZ3ViNcRVLn2T5kMKsvJheAMDnDsMMs7Wp6NYDxRuY6cprMx?cluster=devnet), refund [TUuMwW...](https://explorer.solana.com/tx/TUuMwWGUeErAfuajz7KXVGj562k1tEwtudX9kmqkza7iVtQS5wHj4xfV6M4Y2cBGZ3KmRcbse99XgjxMjQAyzfy?cluster=devnet); [When a payment fails](#when-a-payment-fails) |
 
 ## What a request looks like
 
@@ -43,6 +64,7 @@ The facilitator runs inside the same Cloudflare Worker as the API and pays the n
 | `GET /v1/kenya/unit-trusts/:scheme` | 0.001 | One Kenyan scheme, every quarter since December 2023 |
 | `POST /v1/ask` | metered, at most 0.05 | The AI analyst answers a question from the data |
 | `GET /v1`, `/v1/overview`, `/v1/search?q=`, `/v1/payments` | free | Catalog, totals, id search, ledger |
+| `GET /v1/status`, `/v1/proof/cap`, `/discovery/resources`, `POST /mcp` | free | Hourly check results, live cap proof, x402 Bazaar listing, MCP server |
 
 All prices come from one list, [`src/catalog.ts`](src/catalog.ts). The x402 route config, the free catalog, the demo page and the analyst's tool prices are all generated from it, so they cannot disagree.
 
@@ -74,24 +96,40 @@ A buyer should not have to trust our server. [`scripts/cap-proof.ts`](scripts/ca
 
 To show the amount is the only reason for the failure, the script also simulates the identical transaction at 3,000 (accepted), at exactly the 10,000 ceiling (accepted) and at 10,001 (rejected, error 235). Across three runs the buyer's balance fell by exactly 3 × 0.003 USDC. The full record is in [`docs/cap-proof.json`](docs/cap-proof.json); run it yourself with `npx tsx scripts/cap-proof.ts`.
 
+**Run it live, in the browser.** The [demo page](https://api.afriradar.com/#proof) has a **Run the attack now** button, also at [`GET /v1/proof/cap`](https://api.afriradar.com/v1/proof/cap). It builds the exact channel-open transaction a buyer sends for a question, adds a `settle_and_seal` for the $0.05 deposit and for one micro-USDC more, and asks a validator to simulate each. The first is accepted and the second is refused by the program, every time, at no cost: a simulation sends nothing. See [`src/proof.ts`](src/proof.ts).
+
+## Agents: hosted MCP, x402 inside MCP, discovery
+
+`https://api.afriradar.com/mcp` is a stateless MCP server (Streamable HTTP). Free tools (`afriradar_catalog`, `afriradar_search`, `afriradar_overview`, `afriradar_status`) answer directly. Paid tools (`afriradar_fund`, `afriradar_history`, `afriradar_category`, `afriradar_top`, `afriradar_compare`, `afriradar_kenya`, `afriradar_kenya_scheme`) charge the same prices over x402 inside MCP with [`@x402/mcp`](https://www.npmjs.com/package/@x402/mcp): the first call returns the price, an x402 MCP client pays in `_meta` and calls again, and the settlement lands in the same public ledger as `mcp://tool/<name>`. A tool that fails is never charged. [`scripts/mcp-pay.ts`](scripts/mcp-pay.ts) makes one paid call with the official client.
+
+```json
+{ "mcpServers": { "afriradar": { "url": "https://api.afriradar.com/mcp" } } }
+```
+
+Every paid HTTP route declares x402 Bazaar discovery metadata, so its 402 tells an agent how to call it (path parameters, query, body). [`/discovery/resources`](https://api.afriradar.com/discovery/resources) lists every route and MCP tool in the Bazaar format, and [`/llms.txt`](https://api.afriradar.com/llms.txt) describes the API for language models. See [`src/mcp.ts`](src/mcp.ts) and [`src/discovery.ts`](src/discovery.ts).
+
+## Reliability, measured every hour
+
+A cron runs at 41 minutes past every hour: the demo wallet buys one fund through the normal x402 flow, and every six hours it also asks the analyst a question. A check passes only if the payment settled on Solana and the data or answer came back. Results are at [`/v1/status`](https://api.afriradar.com/v1/status) and on the demo page. The monitor's payments are real settlements, so they stay in the public ledger, labelled `monitor` and counted apart from visitors. See [`src/monitor.ts`](src/monitor.ts).
+
 ## When a payment fails
 
 - **The request fails** (unknown fund, bad input, AI unavailable): the handler answers 4xx or 5xx and the payment is cancelled. You are never charged for an error.
 - **Settlement is broadcast but its confirmation is not seen** (often a rate-limited RPC): before refusing, the server reads the transaction from the chain. If the treasury received the money, the data is released and the ledger notes it was recovered.
 - **Still unresolved:** `GET /v1/redeem/:tx` releases the data for free once the chain shows the payment arrived.
 
-Every settlement is written to the public ledger. Anyone can recount it from the chain:
+Every settlement is written to the public ledger, and a failed payment keeps the facilitator's reason. Anyone can recount the ledger from the chain, in the browser on the [demo page](https://api.afriradar.com/#ledger) or from a terminal:
 
 ```
 npx afriradar verify
 ...
-matched         50 of 50 ledger rows found on chain for the exact amount
+matched         58 of 58 ledger rows found on chain for the exact amount
 OK: every payment the API claims is on chain.
 ```
 
 ## Try it
 
-**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Phantom, Solflare) with free devnet USDC from [faucet.circle.com](https://faucet.circle.com).
+**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. MetaMask is not offered: its Solana wallet signs on mainnet only.
 
 **From a terminal** (Node 22 or later), with the [`afriradar`](https://www.npmjs.com/package/afriradar) package on npm:
 
@@ -115,7 +153,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 52 tests: data, Kenya, billing rules, facilitator storage
+npm test                 # 74 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
 npm run typecheck
 ```
 
@@ -134,7 +172,12 @@ A keyed RPC is needed because Solana's public RPC refuses requests that come fro
 | Part | Where |
 |---|---|
 | Hono app, x402 middleware, free and paid routes | [`src/app.ts`](src/app.ts) |
-| Worker entry: D1, Workers AI, in-process facilitator, daily cron | [`src/worker.ts`](src/worker.ts) |
+| Worker entry: D1, Workers AI, in-process facilitator, daily and hourly crons | [`src/worker.ts`](src/worker.ts) |
+| Live cap proof (simulated over-cap claim) | [`src/proof.ts`](src/proof.ts) |
+| Hosted MCP server, x402 inside MCP | [`src/mcp.ts`](src/mcp.ts) |
+| x402 Bazaar discovery | [`src/discovery.ts`](src/discovery.ts) |
+| Hourly end-to-end payment monitor | [`src/monitor.ts`](src/monitor.ts) |
+| Test USDC faucet for visitors' wallets | [`src/faucet.ts`](src/faucet.ts) |
 | Durable payment-channel storage for the `upto` facilitator, on D1 | [`src/facilitator/storage.ts`](src/facilitator/storage.ts) |
 | Reading a settlement from the chain | [`src/reconcile.ts`](src/reconcile.ts) |
 | Nigeria data: CSV ingest and queries | [`src/data`](src/data) |
@@ -143,7 +186,7 @@ A keyed RPC is needed because Solana's public RPC refuses requests that come fro
 | Demo page | [`public`](public), [`web`](web) |
 | SDK, CLI, MCP server, chain verifier | [`packages/afriradar`](packages/afriradar) |
 
-Stack: `@x402/core`, `@x402/svm`, `@x402/hono` 2.28, `@solana/kit` 6.10, Hono, Cloudflare Workers with D1 and Workers AI (`@cf/openai/gpt-oss-120b`).
+Stack: `@x402/core`, `@x402/svm`, `@x402/hono`, `@x402/mcp`, `@x402/extensions` 2.28, `@solana/kit` 6.10, Hono, Cloudflare Workers with D1 and Workers AI (`@cf/openai/gpt-oss-120b`).
 
 ## What existed before the hackathon
 

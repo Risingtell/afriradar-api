@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # npm: security updates only (automated security fixes are on). Version bumps of @x402/svm would
+  # move the bundle that src/x402-svm-channels.d.ts aliases, so those are taken by hand.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
