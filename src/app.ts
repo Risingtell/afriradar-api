@@ -79,7 +79,8 @@ export async function createApp(deps: Deps) {
       const tx = err.transaction;
       const route = pathOf(ctx.paymentPayload.resource?.url);
       if (err.errorReason !== "settlement_pending" || !tx) {
-        await record({ id: `${tx || crypto.randomUUID()}:failed`, tx: tx || null, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "failed", detail: err.errorReason ?? err.message });
+        // err.message is "reason: explanation"; the reason code alone does not say what to fix.
+        await record({ id: `${tx || crypto.randomUUID()}:failed`, tx: tx || null, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "failed", detail: err.message || err.errorReason });
         return;
       }
       const chain = await deps.readChain(tx);
