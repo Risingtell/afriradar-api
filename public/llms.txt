@@ -1,0 +1,48 @@
+# AfriRadar Data API
+
+> African investment fund data from the regulators, sold one request at a time over x402 on Solana. Every fund in SEC Nigeria's weekly valuation report (weekly since January 2025) and every unit trust scheme in CMA Kenya's quarterly statistical bulletin (quarterly since December 2023). Pay a fraction of a cent in USDC per request: no account, no API key. Network: Solana devnet, USDC mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU. Data, not investment advice.
+
+## How to pay
+
+- Call any paid endpoint. It answers 402 Payment Required with a PAYMENT-REQUIRED header (base64 JSON): price, USDC mint, payee and the x402 scheme.
+- Fixed-price data uses x402 `exact`: sign one USDC transfer and repeat the request with a PAYMENT-SIGNATURE header. The data comes back with the Solana transaction in PAYMENT-RESPONSE.
+- The analyst (POST /v1/ask) uses x402 `upto`: deposit a $0.05 ceiling into a Solana Foundation payment channel; you are charged only the itemized bill and the rest is refunded in the same transaction.
+- AfriRadar runs its own facilitator and pays the network fee, so a buyer needs devnet USDC and no SOL.
+- A request that fails is never charged.
+- Any x402 client works, for example `@x402/fetch` with `@x402/svm`. The `afriradar` npm package wraps it: `npx afriradar --help`.
+
+## Free endpoints
+
+- [Catalog and prices](https://api.afriradar.com/v1): products, prices in USDC, payee, network.
+- [Overview](https://api.afriradar.com/v1/overview): market totals by category, latest SEC week, latest Kenya quarter.
+- [Search](https://api.afriradar.com/v1/search?q=aiico): find fund ids (Nigeria) and scheme keys (Kenya).
+- [Public payment ledger](https://api.afriradar.com/v1/payments): every settlement with its Solana transaction.
+- [Status](https://api.afriradar.com/v1/status): results of the hourly end-to-end payment check.
+- [Live cap proof](https://api.afriradar.com/v1/proof/cap): simulates a claim above a buyer's deposit; the payment-channel program refuses it.
+- [x402 Bazaar listing](https://api.afriradar.com/discovery/resources): every paid route and MCP tool with its payment requirements.
+
+## Paid endpoints (USDC)
+
+- GET /v1/categories/{category} ($0.002): every Nigerian fund in a category for the latest SEC week.
+- GET /v1/funds/{category}/{slug} ($0.001): one fund, latest figures and last 13 weeks.
+- GET /v1/funds/{category}/{slug}/history ($0.005): one fund's full weekly history with the SEC file for every week.
+- GET /v1/top/{category}?by=yield_ytd|yield_wtd|nav|unitholders&limit=N ($0.002): funds ranked.
+- GET /v1/compare?ids=a,b ($0.003): up to 5 funds side by side.
+- GET /v1/kenya/unit-trusts ($0.002): every Kenyan unit trust scheme for the latest CMA quarter.
+- GET /v1/kenya/unit-trusts/{scheme} ($0.001): one Kenyan scheme, every quarter.
+- POST /v1/ask {"question": "..."} (metered, at most $0.05): an AI analyst answers in plain English and buys only the data it needs.
+
+Categories: money-market, bond, dollar, equity, balanced, shariah, reit, ethical, specialised.
+
+## MCP
+
+- [Hosted MCP server](https://api.afriradar.com/mcp): stateless Streamable HTTP. Free tools: afriradar_catalog, afriradar_search, afriradar_overview, afriradar_status. Paid tools, charged per call over x402 inside MCP (`@x402/mcp`): afriradar_fund, afriradar_history, afriradar_category, afriradar_top, afriradar_compare, afriradar_kenya, afriradar_kenya_scheme.
+- Local MCP server that pays with your own wallet and budget: `npx afriradar mcp`.
+
+## More
+
+- [Live demo and console](https://api.afriradar.com)
+- [Source code and setup](https://github.com/Risingtell/afriradar-api)
+- [npm package](https://www.npmjs.com/package/afriradar)
+- [The data site](https://afriradar.com)
+- Contact: hello@afriradar.com

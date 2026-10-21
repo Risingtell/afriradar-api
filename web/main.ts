@@ -7,6 +7,7 @@ import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
 import type { TransactionModifyingSigner } from "@solana/kit";
 import type { Wallet } from "@wallet-standard/base";
 import { connect, disconnect, onWalletsChange, signsMainnetOnly, solanaWallets } from "./wallet.js";
+import { verify, verifyRecent } from "../packages/afriradar/src/verify.js";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
@@ -16,7 +17,8 @@ const explorer = (tx: string) => `https://explorer.solana.com/tx/${tx}?cluster=d
 const USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
 type Catalog = { dataWeek: string; payTo: string; categories: { id: string; name: string }[]; products: { id: string; method: string; path: string; scheme: string; price: string; summary: string; example: string }[] };
-type LedgerRow = { tx: string | null; route: string; scheme: string; amount: string; usdc: number; payer: string | null; status: string; created_at: string; demo: boolean; explorer: string | null };
+type LedgerRow = { tx: string | null; route: string; scheme: string; amount: string; usdc: number; payer: string | null; status: string; created_at: string; demo: boolean; monitor: boolean; explorer: string | null };
+type Totals = { payments: number; usdc: number };
 
 let mode: "ask" | "buy" = "ask";
 let payWith: "demo" | "own" = "demo";
@@ -68,15 +70,16 @@ async function loadCatalog() {
 // ---------- ledger ----------
 async function loadLedger() {
   try {
-    const l = (await (await fetch("/v1/payments?limit=25")).json()) as { settled: { payments: number; usdc: number; payers: number }; recent: LedgerRow[] };
+    const l = (await (await fetch("/v1/payments?limit=25")).json()) as { settled: Totals & { payers: number }; visitors: Totals & { wallets: number }; monitor: { payments: number }; recent: LedgerRow[] };
     $("st-payments").textContent = String(l.settled.payments);
-    $("ledger-totals").innerHTML = `<span><b>${l.settled.payments}</b> settled</span><span><b>${l.settled.usdc.toFixed(6)}</b> USDC</span><span><b>${l.settled.payers}</b> paying wallets</span>`;
+    $("ledger-totals").innerHTML = `<span><b>${l.settled.payments}</b> settled</span><span><b>${l.settled.usdc.toFixed(6)}</b> USDC</span><span><b>${l.visitors.payments}</b> paid from ${l.visitors.wallets} visitors' own wallets</span><span><b>${l.monitor.payments}</b> hourly checks</span>`;
     $("ledger-rows").innerHTML = l.recent.length
       ? l.recent
-          .map((r) => `<tr><td>${esc(r.created_at.replace("T", " ").slice(0, 19))}</td><td class="st-${esc(r.status)}">${esc(r.status)}</td><td>${esc(r.scheme)}</td><td>${r.usdc}</td><td>${esc(r.route)}</td><td>${r.payer ? esc(short(r.payer)) : ""}${r.demo ? ' <span class="tag tag--off">demo</span>' : ""}</td><td>${r.explorer ? `<a href="${esc(r.explorer)}" target="_blank" rel="noopener">${esc(short(r.tx ?? ""))}</a>` : ""}</td></tr>`)
+          .map((r) => `<tr><td>${esc(r.created_at.replace("T", " ").slice(0, 19))}</td><td class="st-${esc(r.status)}">${esc(r.status)}</td><td>${esc(r.scheme)}</td><td>${r.usdc}</td><td>${esc(r.route)}</td><td>${r.payer ? esc(short(r.payer)) : ""}${r.demo ? ' <span class="tag tag--off">demo</span>' : ""}${r.monitor ? ' <span class="tag tag--off">monitor</span>' : ""}</td><td>${r.explorer ? `<a href="${esc(r.explorer)}" target="_blank" rel="noopener">${esc(short(r.tx ?? ""))}</a>` : ""}</td></tr>`)
           .join("")
       : `<tr><td colspan="7">No payments yet. Make the first one above.</td></tr>`;
-    const last = l.recent.find((r) => r.status === "settled" && r.tx);
+    // The hero shows a real purchase when there is one, not the hourly self-check.
+    const last = l.recent.find((r) => r.status === "settled" && r.tx && !r.monitor) ?? l.recent.find((r) => r.status === "settled" && r.tx);
     if (last) {
       $("proof-amount").textContent = `${last.usdc} USDC`;
       $("proof-route").textContent = last.route;
@@ -89,6 +92,97 @@ async function loadLedger() {
   } catch {
     $("proof-tag").textContent = "offline";
     $("proof-tag").className = "tag tag--off";
+  }
+}
+
+// ---------- reliability ----------
+type CheckRow = { at: string; kind: "data" | "ask"; ok: boolean; ms: number; explorer: string | null; detail: string | null };
+type Tally = { runs: number; passed: number };
+const utc = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+
+async function loadStatus() {
+  try {
+    const s = (await (await fetch("/v1/status")).json()) as { last: CheckRow | null; last7d: Tally & { data: Tally; ask: Tally }; payments7d: { settled: number; failed: number } };
+    const tag = $("rel-tag");
+    if (!s.last) {
+      tag.textContent = "first run soon";
+      $("proof-check").textContent = "hourly, first run at :41";
+      $("rel-week").textContent = "The first check runs at 41 minutes past the hour.";
+      return;
+    }
+    const [what, got] = s.last.kind === "ask" ? ["asked the analyst", "got an answer"] : ["bought a fund", "got the data back"];
+    tag.textContent = s.last.ok ? "passing" : "failing";
+    tag.className = `tag ${s.last.ok ? "tag--live" : "tag--devnet"}`;
+    $("proof-check").textContent = `hourly, last ${s.last.ok ? "passed" : "failed"} ${s.last.at.slice(11, 16)} UTC`;
+    $("rel-text").innerHTML = `Last check ${esc(utc(s.last.at))}: ${what} and ${s.last.ok ? `${got} in ${(s.last.ms / 1000).toFixed(1)} s` : `failed (${esc(s.last.detail ?? "unknown")})`}.${s.last.explorer ? ` <a href="${esc(s.last.explorer)}" target="_blank" rel="noopener">Transaction</a>.` : ""} Every hour our demo wallet pays for a fund through the normal x402 flow, and every six hours it also asks the analyst a question.`;
+    const w = s.last7d;
+    $("rel-week").textContent = `Last 7 days: ${w.passed} of ${w.runs} checks passed (data ${w.data.passed}/${w.data.runs}, analyst ${w.ask.passed}/${w.ask.runs}). All payments in that time: ${s.payments7d.settled} settled, ${s.payments7d.failed} failed and not charged.`;
+  } catch {
+    $("rel-tag").textContent = "offline";
+  }
+}
+
+// ---------- proof: try to overcharge ----------
+type Trial = { claimMicroUsdc: number; accepted: boolean; programLog: string | null; error: unknown };
+async function runProof() {
+  const btn = $<HTMLButtonElement>("run-proof");
+  btn.disabled = true;
+  for (const i of [0, 1]) {
+    $(`trial-${i}`).textContent = "Running on Solana devnet...";
+    $(`trial-${i}`).className = "verdict";
+    $(`trial-${i}-log`).textContent = "";
+  }
+  try {
+    const res = await fetch("/v1/proof/cap");
+    const p = (await res.json()) as { trials?: Trial[]; verdict?: string; simulatedAt?: string; program?: string; error?: string };
+    if (!res.ok || !p.trials) throw new Error(p.error ?? `HTTP ${res.status}`);
+    p.trials.forEach((t, i) => {
+      $(`trial-${i}`).textContent = t.accepted ? "Accepted: within the deposit" : "Refused by Solana";
+      $(`trial-${i}`).className = `verdict ${t.accepted ? "ok" : "no"}`;
+      $(`trial-${i}-log`).textContent = t.programLog ?? (t.accepted ? "The payment-channel program would pay this claim." : JSON.stringify(t.error));
+    });
+    const recorded = $<HTMLAnchorElement>("proof-recorded").href;
+    $("proof-note").innerHTML = `${p.verdict === "enforced" ? "Enforced." : "NOT ENFORCED."} Simulated ${esc(utc(p.simulatedAt ?? ""))} against program <code>${esc(short(p.program ?? ""))}</code> with the buyer's real channel-open transaction; nothing was sent. The same attack was also sent for real on 18 October 2026 and rejected on chain: <a id="proof-recorded" href="${esc(recorded)}" target="_blank" rel="noopener">see the transaction</a>.`;
+  } catch (e) {
+    for (const i of [0, 1]) $(`trial-${i}`).textContent = "Could not run";
+    $("trial-0-log").textContent = (e as Error).message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- recount the ledger from the chain, in this browser ----------
+async function recount(all: boolean) {
+  const buttons = [$<HTMLButtonElement>("recount-recent"), $<HTMLButtonElement>("recount-all")];
+  buttons.forEach((b) => (b.disabled = true));
+  const bar = $("recount-bar");
+  const out = $("recount-result");
+  const relay = $<HTMLSelectElement>("recount-rpc").value === "relay";
+  const rpcUrl = relay ? `${location.origin}/rpc` : "https://api.devnet.solana.com";
+  const via = relay ? "our relay" : "Solana's public RPC";
+  bar.style.width = "0";
+  out.textContent = `Reading Solana through ${via}...`;
+  const onProgress = (done: number, total: number) => {
+    bar.style.width = `${Math.round((done / total) * 100)}%`;
+    out.textContent = `Read ${done} of ${total} transactions through ${via}...`;
+  };
+  try {
+    if (all) {
+      const r = await verify({ baseUrl: location.origin, rpcUrl, batchSize: relay ? 20 : 5, onProgress });
+      out.innerHTML = r.ok
+        ? `<span class="ok-text">OK: all ${r.matched} settled payments in our ledger are on chain for the exact amount.</span> The treasury received ${r.chain.receipts} payments (${r.chain.usdc.toFixed(6)} USDC) in total; ${r.unlisted.length} are not in this ledger, from test runs against other deployments.`
+        : `<span class="bad-text">${r.missing.length} ledger rows do not match the chain.</span> First: ${esc(short(r.missing[0].tx))}.`;
+    } else {
+      const r = await verifyRecent({ baseUrl: location.origin, rpcUrl, count: 50, batchSize: relay ? 25 : 5, onProgress });
+      out.innerHTML = r.ok
+        ? `<span class="ok-text">OK: the latest ${r.checked} settled payments are on chain, each for exactly the amount listed.</span>`
+        : `<span class="bad-text">${r.missing.length} of ${r.checked} do not match the chain.</span> First: ${esc(short(r.missing[0].tx))}.`;
+    }
+    bar.style.width = "100%";
+  } catch (e) {
+    out.innerHTML = `<span class="bad-text">Could not finish: ${esc((e as Error).message)}.</span> Try the other RPC, or <code>npx afriradar verify</code>.`;
+  } finally {
+    buttons.forEach((b) => (b.disabled = false));
   }
 }
 
@@ -119,6 +213,7 @@ function renderWallets() {
       const w = own?.wallet;
       own = null;
       $("wallet-line").innerHTML = WALLET_HINT;
+      $("faucet-box").innerHTML = "";
       renderWallets();
       if (w) await disconnect(w).catch(() => undefined);
     });
@@ -156,10 +251,36 @@ async function showBalance(addr: string) {
     const bal = r.value.reduce((a, t) => a + t.account.data.parsed.info.tokenAmount.uiAmount, 0);
     $("wallet-line").innerHTML = bal > 0
       ? `Devnet USDC balance: ${bal}. You need no SOL: the facilitator pays the network fee.`
-      : `This wallet has no devnet USDC. Get some free at <a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> (Solana Devnet, address ${esc(addr)}).`;
+      : `This wallet has no devnet USDC. Get some free at <a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> (Solana Devnet, address ${esc(addr)}), or from us below.`;
+    renderFaucet(addr, bal);
   } catch {
     /* balance is a convenience; the payment itself reports any shortfall */
   }
+}
+
+// Test USDC from our demo wallet, for a connected wallet that has less than 1.
+function renderFaucet(addr: string, balance: number) {
+  const box = $("faucet-box");
+  if (balance >= 1) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `<button class="btn btn--ghost" type="button" id="faucet">Send me 0.25 test USDC</button>`;
+  $("faucet").addEventListener("click", async () => {
+    const b = $<HTMLButtonElement>("faucet");
+    b.disabled = true;
+    b.textContent = "Sending on Solana devnet...";
+    try {
+      const res = await fetch("/demo/faucet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address: addr }) });
+      const r = (await res.json()) as { sent?: number; explorer?: string; error?: string; message?: string };
+      box.innerHTML = r.sent
+        ? `<p class="wallet-line">Sent ${r.sent} test USDC. <a href="${esc(r.explorer)}" target="_blank" rel="noopener">Transaction</a>. You can pay now.</p>`
+        : `<p class="wallet-line">${esc(r.error ?? r.message ?? `HTTP ${res.status}`)}${r.explorer ? ` <a href="${esc(r.explorer)}" target="_blank" rel="noopener">Transaction</a>` : ""}</p>`;
+      if (r.sent && own) void showBalance(own.address);
+    } catch (e) {
+      box.innerHTML = `<p class="wallet-line">Could not send: ${esc((e as Error).message)}</p>`;
+    }
+  });
 }
 
 // ---------- running ----------
@@ -275,5 +396,10 @@ $("run").addEventListener("click", () => void run());
 onWalletsChange(() => { if (payWith === "own") renderWallets(); });
 
 void loadCatalog();
+$("run-proof").addEventListener("click", () => void runProof());
+$("recount-recent").addEventListener("click", () => void recount(false));
+$("recount-all").addEventListener("click", () => void recount(true));
 void loadLedger();
+void loadStatus();
 setInterval(() => void loadLedger(), 20000);
+setInterval(() => void loadStatus(), 120000);

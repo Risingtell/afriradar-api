@@ -8,6 +8,7 @@ import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
 import type { Db } from "./db.js";
+import { bump, dayOf, hourOf } from "./limits.js";
 
 export const DEMO_LIMITS = { perIpPerHour: 12, perDay: 400 };
 
@@ -21,33 +22,28 @@ const PRODUCTS: Record<string, (p: Record<string, string>) => string> = {
   kenyaScheme: (p) => `/v1/kenya/unit-trusts/${/^[a-z0-9-]+$/.test(p.id ?? "") ? p.id : "sanlam"}`,
 };
 
-/** Counts a demo run against the per-IP hourly and global daily limits. One statement each, so concurrent isolates cannot overshoot by much. */
+/** Counts a demo run against the per-IP hourly and global daily limits. */
 async function allow(db: Db, ip: string, now: Date): Promise<string | null> {
-  const hour = now.toISOString().slice(0, 13);
-  const day = now.toISOString().slice(0, 10);
-  const bump = async (k: string) => {
-    await db.run(
-      `INSERT INTO kv (ns, k, v, updated_at) VALUES ('demo', ?, '1', ?)
-       ON CONFLICT (ns, k) DO UPDATE SET v = CAST(CAST(v AS INTEGER) + 1 AS TEXT), updated_at = excluded.updated_at`,
-      k, now.toISOString(),
-    );
-    return Number((await db.first<{ v: string }>("SELECT v FROM kv WHERE ns = 'demo' AND k = ?", k))?.v ?? 0);
-  };
-  if ((await bump(`ip:${ip}:${hour}`)) > DEMO_LIMITS.perIpPerHour) return `demo limit is ${DEMO_LIMITS.perIpPerHour} runs an hour per visitor; use your own wallet or try later`;
-  if ((await bump(`day:${day}`)) > DEMO_LIMITS.perDay) return "today's demo budget is used up; pay with your own devnet wallet instead";
+  if ((await bump(db, "demo", `ip:${ip}:${hourOf(now)}`, now)) > DEMO_LIMITS.perIpPerHour) return `demo limit is ${DEMO_LIMITS.perIpPerHour} runs an hour per visitor; use your own wallet or try later`;
+  if ((await bump(db, "demo", `day:${dayOf(now)}`, now)) > DEMO_LIMITS.perDay) return "today's demo budget is used up; pay with your own devnet wallet instead";
   return null;
+}
+
+/** A fetch that pays this same app's paid routes in-process with `signer`, through the normal x402 client. */
+export function localPaidFetch(app: Hono, signer: TransactionSigner, rpcUrl: string): typeof fetch {
+  const local = ((input: RequestInfo | URL, init?: RequestInit) => app.fetch(new Request(input, init))) as typeof fetch;
+  return wrapFetchWithPayment(
+    local,
+    new x402Client()
+      .register("solana:*", new ExactSvmScheme(signer, { rpcUrl }))
+      .register("solana:*", new UptoSvmScheme(signer, { rpcUrl }))
+      .setSpendControls({ maxAmountPerPayment: "$0.05" }),
+  );
 }
 
 export function mountDemo(app: Hono, opts: { db: Db; signer: TransactionSigner; rpcUrl: string; explorer: (sig: string) => string; now: () => Date }) {
   // In-process: the demo's paid request goes straight into this same app, no network hop.
-  const local = ((input: RequestInfo | URL, init?: RequestInit) => app.fetch(new Request(input, init))) as typeof fetch;
-  const paidFetch = wrapFetchWithPayment(
-    local,
-    new x402Client()
-      .register("solana:*", new ExactSvmScheme(opts.signer, { rpcUrl: opts.rpcUrl }))
-      .register("solana:*", new UptoSvmScheme(opts.signer, { rpcUrl: opts.rpcUrl }))
-      .setSpendControls({ maxAmountPerPayment: "$0.05" }),
-  );
+  const paidFetch = localPaidFetch(app, opts.signer, opts.rpcUrl);
 
   app.get("/demo", (c) => c.json({ wallet: opts.signer.address, limits: DEMO_LIMITS, products: Object.keys(PRODUCTS).concat("ask") }));
 

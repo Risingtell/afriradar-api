@@ -163,7 +163,24 @@ pre.json { max-height: 22rem; overflow: auto; margin: 0; padding: 1rem; border: 
 .markets > div { padding: 1.4rem 1.45rem; background: var(--white); }
 .markets .who-reg { font-size: .85rem; color: var(--slate); }
 
+.cols2 + .cols2 { margin-top: 1rem; }
+
+/* proof: the attack board */
+.trials { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 0 0 1.5rem; border: 1px solid var(--line-dark); border-radius: var(--radius); overflow: hidden; background: var(--line-dark); }
+.trial { padding: 1.4rem 1.45rem; background: var(--ink-2); }
+.trial .claim { display: block; margin: .8rem 0 .2rem; font: 700 clamp(1.7rem, 3.4vw, 2.6rem)/1.05 var(--font); letter-spacing: -.03em; }
+.verdict { margin: 1rem 0 0; font: 700 .95rem/1.4 var(--mono); color: var(--mist); }
+.verdict.ok { color: var(--emerald); }
+.verdict.no { color: var(--gold); }
+.trial .log { margin: .4rem 0 0; font: 400 .76rem/1.5 var(--mono); color: var(--mist); overflow-wrap: anywhere; }
+
 /* ledger */
+.panels { margin: 0 0 1.5rem; }
+.panels select { margin-bottom: .6rem; }
+.progress { height: 4px; margin: .9rem 0 .4rem; border-radius: 2px; overflow: hidden; background: var(--line-dark); }
+.progress i { display: block; width: 0; height: 100%; background: var(--emerald); transition: width .2s; }
+.ok-text { color: var(--emerald); }
+.bad-text { color: var(--bad); }
 .ledger-totals { display: flex; flex-wrap: wrap; gap: 1rem 2.5rem; margin: 0 0 1.25rem; font: 600 .9rem/1.4 var(--mono); color: var(--mist); }
 .ledger-totals b { color: var(--white); font-size: 1.35rem; }
 .data-table th { color: var(--mist); font: 600 .68rem/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
@@ -186,7 +203,7 @@ pre.code { margin: 0; padding: 1.1rem 1.2rem; overflow-x: auto; border: 1px soli
 @media (max-width: 560px) {
   body { font-size: 1rem; }
   .stats b { font-size: 1.35rem; }
-  .steps, .cols2, .grid3, .who, .markets { grid-template-columns: minmax(0, 1fr); }
+  .steps, .cols2, .grid3, .who, .markets, .trials { grid-template-columns: minmax(0, 1fr); }
   .site-head { position: static; }
   .site-head nav { gap: .2rem 1rem; }
   .logo small { display: none; }

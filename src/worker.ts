@@ -14,6 +14,7 @@ import { d1, type Db } from "./db.js";
 import { ingest } from "./data/ingest.js";
 import { ingestKenya } from "./data/kenya.js";
 import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
+import { kindsAt, runMonitor } from "./monitor.js";
 import { jsonRpc } from "./reconcile.js";
 
 export type Env = {
@@ -28,9 +29,10 @@ export type Env = {
   AI_MODEL?: string;
 };
 
+const MONITOR_CRON = "41 * * * *"; // wrangler.toml [triggers]
 const signerFrom = (json: string) => createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(json)));
 
-type Built = { app: Awaited<ReturnType<typeof createApp>>; upto: UptoFacilitator; db: Db };
+type Built = { app: Awaited<ReturnType<typeof createApp>>; upto: UptoFacilitator; db: Db; demoSigner?: KeyPairSigner };
 let built: Promise<Built> | undefined;
 
 async function build(env: Env): Promise<Built> {
@@ -49,6 +51,7 @@ async function build(env: Env): Promise<Built> {
     settle: (p, r) => facilitator.settle(p, r),
     getSupported: async () => facilitator.getSupported() as SupportedResponse,
   };
+  const demoSigner = env.DEMO_BUYER_KEY ? await signerFrom(env.DEMO_BUYER_KEY) : undefined;
   const app = await createApp({
     db,
     facilitator: client,
@@ -57,9 +60,10 @@ async function build(env: Env): Promise<Built> {
     authorizer,
     rpcUrl: env.RPC_URL,
     readChain: chainReader(jsonRpc(env.RPC_URL), env.TREASURY),
-    demoSigner: env.DEMO_BUYER_KEY ? await signerFrom(env.DEMO_BUYER_KEY) : undefined,
+    demoSigner,
+    feePayer,
   });
-  return { app, upto, db };
+  return { app, upto, db, demoSigner };
 }
 
 const get = (env: Env) => (built ??= build(env).catch((e) => {
@@ -73,10 +77,20 @@ export default {
     return app.fetch(req, env, ctx);
   },
 
-  // Daily: pull the latest SEC week and the Kenya history from AfriRadar, then close and reclaim
-  // abandoned payment channels.
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const { upto, db } = await get(env);
+  // Hourly: the end-to-end payment monitor. Daily: pull the latest SEC week and the Kenya history
+  // from AfriRadar, then close and reclaim abandoned payment channels.
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const { app, upto, db, demoSigner } = await get(env);
+    if (event.cron === MONITOR_CRON) {
+      if (!demoSigner) return;
+      const now = new Date(event.scheduledTime);
+      ctx.waitUntil(
+        runMonitor({ app, db, signer: demoSigner, rpcUrl: env.RPC_URL, now: () => new Date(), kinds: kindsAt(now) })
+          .then((r) => console.log("monitor", JSON.stringify(r)))
+          .catch((e) => console.error("monitor failed", e)),
+      );
+      return;
+    }
     ctx.waitUntil(
       (async () => {
         try {

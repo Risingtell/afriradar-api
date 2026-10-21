@@ -25,6 +25,7 @@
     <nav aria-label="Main">
       <a href="#try">Try it</a>
       <a href="#how">How it works</a>
+      <a href="#proof">Proof</a>
       <a href="#prices">Prices</a>
       <a href="#ledger">Ledger</a>
       <a href="#build">Build</a>
@@ -52,6 +53,7 @@
             <dt>For</dt><dd id="proof-route">loading</dd>
             <dt>When</dt><dd id="proof-when">loading</dd>
             <dt>Tx</dt><dd><a id="proof-tx" href="#ledger">loading</a></dd>
+            <dt>Checked</dt><dd id="proof-check">loading</dd>
           </dl>
         </aside>
       </div>
@@ -125,6 +127,7 @@
             <div id="own-wallet" hidden>
               <div id="wallet-buttons"></div>
               <p class="wallet-line" id="wallet-line">Set your wallet to devnet. Get free devnet USDC at <a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a>. You need no SOL: the facilitator pays the network fee.</p>
+              <div id="faucet-box"></div>
             </div>
             <p class="wallet-line" id="demo-line">Our demo wallet pays. A few runs an hour per visitor.</p>
           </div>
@@ -159,6 +162,20 @@
     </div>
   </section>
 
+  <section class="band band--night" id="proof">
+    <div class="wrap">
+      <p class="eyebrow">Proof <span class="tag tag--live">runs on Solana devnet</span></p>
+      <h2 class="h-l">Try to overcharge a buyer</h2>
+      <p class="lead">A question locks a $0.05 deposit in a Solana Foundation payment channel. Press the button and our server signs a claim for one micro-USDC more than the deposit, the way a dishonest server would. A Solana validator runs it with the buyer's real channel-open transaction. It is a simulation, so nothing is sent and nothing is spent.</p>
+      <div class="trials" aria-live="polite">
+        <div class="trial"><span class="tag tag--off">claim 1</span><span class="claim">$0.050000</span><span class="muted small">the whole deposit</span><p class="verdict" id="trial-0">Not run yet</p><p class="log" id="trial-0-log"></p></div>
+        <div class="trial"><span class="tag tag--off">claim 2</span><span class="claim">$0.050001</span><span class="muted small">one micro-USDC over the deposit</span><p class="verdict" id="trial-1">Not run yet</p><p class="log" id="trial-1-log"></p></div>
+      </div>
+      <button class="btn" id="run-proof" type="button">Run the attack now</button>
+      <p class="small muted" id="proof-note">The same attack was also sent for real on 18 October 2026, and Solana rejected it on chain: <a id="proof-recorded" href="https://explorer.solana.com/tx/3rQ1eaaojMQ8i66S9fDg3gt12gnFiE2x4Enok8WRHZJ12uCzxB3JzTp1Jhc6zGv5444NVpttTGjxwHoGQTu6qkfG?cluster=devnet" target="_blank" rel="noopener">see the transaction</a>.</p>
+    </div>
+  </section>
+
   <section class="band band--white" id="prices">
     <div class="wrap">
       <p class="eyebrow">Prices <span class="tag tag--live">read live from /v1</span></p>
@@ -188,7 +205,7 @@
       <div class="who">
         <div><span class="n">01</span><p class="role">Evaluator</p><h3 class="h-m">Check every claim</h3>Run the console with the demo wallet, open the transaction, then run <code>npx afriradar verify</code> to recount the ledger from the chain.</div>
         <div><span class="n">02</span><p class="role">Developer</p><h3 class="h-m">Three lines of code</h3><code>npm i afriradar</code>, pass any Solana signer, call <code>api.top("money-market")</code>. Spend caps apply before anything is signed.</div>
-        <div><span class="n">03</span><p class="role">AI agent</p><h3 class="h-m">Tools that pay</h3><code>afriradar mcp</code> gives an agent 8 tools. Each paid result carries its transaction and the session spend against a budget you set.</div>
+        <div><span class="n">03</span><p class="role">AI agent</p><h3 class="h-m">Tools that pay</h3>Point any MCP client at <code>api.afriradar.com/mcp</code>, or run <code>afriradar mcp</code> with your own wallet. Each paid result carries its Solana transaction.</div>
         <div><span class="n">04</span><p class="role">Investor</p><h3 class="h-m">Plain English answers</h3>Which fund pays most, who manages it, how a yield moved. The analyst answers only from regulator figures and names the week or quarter.</div>
       </div>
     </div>
@@ -199,13 +216,34 @@
       <p class="eyebrow">Public ledger <span class="tag tag--live">auto refresh</span></p>
       <h2 class="h-l">Every payment, with its transaction</h2>
       <div class="ledger-totals" id="ledger-totals"></div>
+      <div class="cols2 panels">
+        <div>
+          <h3 class="h-m">Hourly payment check <span class="tag tag--off" id="rel-tag">loading</span></h3>
+          <p class="small" id="rel-text">Every hour our demo wallet pays for a fund through the normal x402 flow, and every six hours it also asks the analyst a question. A check passes only if the payment settled on Solana and the data came back.</p>
+          <p class="small muted" id="rel-week"></p>
+          <p class="small"><a href="/v1/status">Every check, as JSON</a></p>
+        </div>
+        <div>
+          <h3 class="h-m">Check this ledger against Solana</h3>
+          <p class="small">Your browser reads the payments straight from Solana and compares each amount with this ledger. Nothing here trusts our database.</p>
+          <label for="recount-rpc">Read Solana through</label>
+          <select id="recount-rpc">
+            <option value="relay">Our read-only relay (fast)</option>
+            <option value="public">Solana public RPC (independent)</option>
+          </select>
+          <button class="btn" id="recount-recent" type="button">Check the latest 50</button>
+          <button class="btn btn--ghost" id="recount-all" type="button">Recount everything</button>
+          <div class="progress" aria-hidden="true"><i id="recount-bar"></i></div>
+          <p class="small" id="recount-result" aria-live="polite"></p>
+        </div>
+      </div>
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr><th>When (UTC)</th><th>Status</th><th>Scheme</th><th>USDC</th><th>Request</th><th>Payer</th><th>Tx</th></tr></thead>
           <tbody id="ledger-rows"><tr><td colspan="7">Loading</td></tr></tbody>
         </table>
       </div>
-      <p class="small muted">A deposit row is the $0.05 a question locks up front; the settled row is what was actually charged, and the channel refunds the difference. Rows marked demo were paid by our demo wallet, not a customer. Recount it yourself: <code>npx afriradar verify</code>.</p>
+      <p class="small muted">A deposit row is the $0.05 a question locks up front; the settled row is what was actually charged, and the channel refunds the difference. Rows marked demo were paid by our demo wallet, not a customer; rows marked monitor are the hourly check. From a terminal: <code>npx afriradar verify</code>.</p>
     </div>
   </section>
 
@@ -231,6 +269,26 @@ const { data, receipt } = await api.top("money-market", { limit: 3 });
 console.log(data.funds[0].name, receipt.explorer);</pre>
         </div>
       </div>
+      <div class="cols2">
+        <div>
+          <h3 class="h-m">Hosted MCP server</h3>
+<pre class="code">{
+  "mcpServers": {
+    "afriradar": { "url": "https://api.afriradar.com/mcp" }
+  }
+}</pre>
+          <p class="small muted">Search, overview and status are free. Fund, category, ranking, comparison and Kenya tools are paid per call over x402 inside MCP, so an agent with an x402 MCP client pays in devnet USDC and gets the data in the same call.</p>
+        </div>
+        <div>
+          <h3 class="h-m">For agents that look around first</h3>
+          <ul class="small">
+            <li><a href="/llms.txt">/llms.txt</a>: what this API is and how to pay, in plain text for language models.</li>
+            <li><a href="/discovery/resources">/discovery/resources</a>: every paid route and MCP tool in the x402 Bazaar listing format.</li>
+            <li>Each paid route's 402 carries x402 Bazaar call instructions: inputs, path parameters, body.</li>
+            <li><a href="/v1/status">/v1/status</a>: the hourly payment check, as JSON.</li>
+          </ul>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -242,7 +300,9 @@ console.log(data.funds[0].name, receipt.explorer);</pre>
         <div><h3 class="h-m">Live now</h3><ul>
           <li>Regulator fund data for every Nigerian fund (weekly since January 2025) and every Kenyan unit trust scheme (quarterly since December 2023), refreshed daily from <a href="https://afriradar.com">afriradar.com</a>.</li>
           <li>Real x402 payments on Solana devnet: fixed-price transfers and capped payment channels.</li>
-          <li>Our own facilitator, a public ledger, and a chain verifier anyone can run.</li>
+          <li>Our own facilitator, a public ledger, and a chain verifier anyone can run, in a terminal or in this page.</li>
+          <li>A live proof that Solana enforces the analyst's cap, and an hourly end-to-end payment check.</li>
+          <li>A hosted MCP server whose paid tools charge over x402.</li>
         </ul></div>
         <div><h3 class="h-m">Not yet</h3><ul>
           <li>Mainnet. Payments use free devnet USDC while the service is tested.</li>

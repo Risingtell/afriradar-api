@@ -23,7 +23,12 @@ migrations_dir = "migrations"
 binding = "AI"
 
 [triggers]
-crons = ["17 6 * * *"]
+# 06:17 daily: data ingest and channel rent cleanup. Hourly: the end-to-end payment monitor.
+crons = ["17 6 * * *", "41 * * * *"]
+
+# @x402/svm keeps its payment-channel builders out of its public exports (see src/x402-svm-channels.d.ts).
+[alias]
+"x402-svm-channels" = "./node_modules/@x402/svm/dist/esm/chunk-XUXHO7LW.mjs"
 
 [observability]
 enabled = true

@@ -4,8 +4,9 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { FacilitatorClient, RoutesConfig } from "@x402/core/server";
-import type { Network } from "@x402/core/types";
+import type { Network, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/hono";
+import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { ExactSvmScheme as ExactServer } from "@x402/svm/exact/server";
 import { UptoSvmScheme as UptoServer } from "@x402/svm/upto/server";
 import type { MessagePartialSigner, TransactionSigner } from "@solana/kit";
@@ -16,6 +17,12 @@ import { CATEGORIES, isCategory } from "./data/model.js";
 import * as kenya from "./data/kenya.js";
 import * as q from "./data/queries.js";
 import { mountDemo } from "./demo.js";
+import { discoveryExtension, mountDiscovery } from "./discovery.js";
+import { mountFaucet } from "./faucet.js";
+import { bump, hourOf } from "./limits.js";
+import { mcpTools, mountMcp } from "./mcp.js";
+import { monitorStatus } from "./monitor.js";
+import { capProof } from "./proof.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
 
 export type Deps = {
@@ -31,11 +38,14 @@ export type Deps = {
   now?: () => Date;
   /** Funded devnet wallet behind the no-wallet demo. Its payments are labelled demo in the ledger. */
   demoSigner?: TransactionSigner;
+  /** The facilitator's fee payer: pays the network fee and account rent for faucet sends. */
+  feePayer?: TransactionSigner;
 };
 
 const explorerDefault = (sig: string) => `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
 const pathOf = (url: string | undefined) => {
   try {
+    if (url && !/^https?:/.test(url)) return url; // mcp://tool/<name> for paid MCP tool calls
     return url ? new URL(url).pathname + new URL(url).search : "";
   } catch {
     return url ?? "";
@@ -53,6 +63,32 @@ export async function createApp(deps: Deps) {
        ON CONFLICT (id) DO UPDATE SET status = excluded.status, amount = excluded.amount, detail = excluded.detail`,
       row.id, row.tx, row.route, row.scheme, row.amount, row.ceiling ?? null, row.payer ?? null, row.status, row.detail ?? null, now().toISOString(),
     );
+
+  // Settled payments without the hourly monitor's own, plus the share paid by visitors' wallets
+  // (anyone but our demo wallet). The monitor is counted on its own line.
+  const ledgerTotals = async () => {
+    const demo = deps.demoSigner?.address ?? "";
+    const t = await db.first<{ n: number; micro: number; payers: number; vn: number; vmicro: number; vpayers: number; mn: number }>(
+      `SELECT coalesce(sum(1 - mon), 0) AS n, coalesce(sum(CASE WHEN mon = 0 THEN amt ELSE 0 END), 0) AS micro,
+              count(DISTINCT CASE WHEN mon = 0 THEN payer END) AS payers,
+              coalesce(sum(CASE WHEN mon = 0 AND payer <> ? THEN 1 ELSE 0 END), 0) AS vn,
+              coalesce(sum(CASE WHEN mon = 0 AND payer <> ? THEN amt ELSE 0 END), 0) AS vmicro,
+              count(DISTINCT CASE WHEN mon = 0 AND payer <> ? THEN payer END) AS vpayers,
+              coalesce(sum(mon), 0) AS mn
+       FROM (SELECT payer, CAST(amount AS INTEGER) AS amt, CASE WHEN detail = 'monitor' THEN 1 ELSE 0 END AS mon FROM payments WHERE status = 'settled')`,
+      demo, demo, demo,
+    );
+    return {
+      settled: { payments: t?.n ?? 0, usdc: (t?.micro ?? 0) / 1e6, payers: t?.payers ?? 0 },
+      visitors: { payments: t?.vn ?? 0, usdc: (t?.vmicro ?? 0) / 1e6, wallets: t?.vpayers ?? 0 },
+      monitor: { payments: t?.mn ?? 0 },
+    };
+  };
+  const status = async () => {
+    const since = new Date(now().getTime() - 7 * 86_400_000).toISOString();
+    const p = await db.first<{ settled: number; failed: number }>("SELECT coalesce(sum(status = 'settled'), 0) AS settled, coalesce(sum(status = 'failed'), 0) AS failed FROM payments WHERE created_at >= ?", since);
+    return { ...(await monitorStatus(db, now(), explorer)), payments7d: { settled: p?.settled ?? 0, failed: p?.failed ?? 0 }, ledger: await ledgerTotals() };
+  };
 
   const resourceServer = new x402ResourceServer(deps.facilitator)
     .register(NETWORK as Network, new ExactServer())
@@ -94,10 +130,11 @@ export async function createApp(deps: Deps) {
       }
       await record({ id: `${tx}:pending`, tx, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "pending", detail: `chain says ${chain.status}; redeem at /v1/redeem/${tx}` });
     });
+  resourceServer.registerExtension(bazaarResourceServerExtension);
   await resourceServer.initialize();
 
   const routes: RoutesConfig = Object.fromEntries(
-    (Object.entries(PRODUCTS) as [ProductId, (typeof PRODUCTS)[ProductId]][]).map(([, p]) => [
+    (Object.entries(PRODUCTS) as [ProductId, (typeof PRODUCTS)[ProductId]][]).map(([id, p]) => [
       `${p.method} ${p.path}`,
       {
         accepts: {
@@ -113,6 +150,7 @@ export async function createApp(deps: Deps) {
         },
         description: p.summary,
         mimeType: "application/json",
+        extensions: discoveryExtension(id),
       },
     ]),
   );
@@ -141,7 +179,8 @@ export async function createApp(deps: Deps) {
         { id: "kenya", source: "CMA Kenya quarterly statistical bulletin", frequency: "quarterly", latest: await kenya.latestQuarter(db) },
       ],
       categories: Object.entries(CATEGORIES).map(([id, m]) => ({ id, name: m.name })),
-      free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/redeem/:tx"],
+      free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/status", "GET /v1/proof/cap", "GET /v1/redeem/:tx", "GET /discovery/resources", "POST /mcp"],
+      mcp: "https://api.afriradar.com/mcp: the same data as MCP tools, paid tools charged over x402 inside MCP.",
       products: Object.entries(PRODUCTS).map(([id, p]) => ({ id, method: p.method, path: p.path, scheme: p.scheme, price: usd(p.price), priceMicroUsdc: p.price, summary: p.summary, example: p.example })),
       failedPayments: "A request that errors is never charged. If a settlement is broadcast but unconfirmed, the server checks the chain before replying; anything still unresolved can be redeemed at /v1/redeem/:tx.",
     });
@@ -154,12 +193,14 @@ export async function createApp(deps: Deps) {
   });
   app.get("/v1/payments", async (c) => {
     const rows = await db.all<Record<string, string>>("SELECT tx, route, scheme, amount, ceiling, payer, status, detail, created_at FROM payments ORDER BY created_at DESC, id LIMIT ? OFFSET ?", Math.min(Number(c.req.query("limit")) || 50, 200), Math.max(Number(c.req.query("offset")) || 0, 0));
-    const totals = await db.first<{ n: number; micro: number; payers: number }>("SELECT count(*) AS n, coalesce(sum(CAST(amount AS INTEGER)), 0) AS micro, count(DISTINCT payer) AS payers FROM payments WHERE status = 'settled'");
+    const t = await ledgerTotals();
     return c.json({
-      settled: { payments: totals?.n ?? 0, usdc: (totals?.micro ?? 0) / 1e6, payers: totals?.payers ?? 0 },
-      recent: rows.map((r) => ({ ...r, usdc: Number(r.amount) / 1e6, demo: !!deps.demoSigner && r.payer === deps.demoSigner.address, explorer: r.tx ? explorer(r.tx) : null })),
+      settled: t.settled,
+      visitors: t.visitors,
+      monitor: t.monitor,
+      recent: rows.map((r) => ({ ...r, usdc: Number(r.amount) / 1e6, monitor: r.detail === "monitor", demo: !!deps.demoSigner && r.payer === deps.demoSigner.address && r.detail !== "monitor", explorer: r.tx ? explorer(r.tx) : null })),
       demoWallet: deps.demoSigner?.address ?? null,
-      verify: "Every tx above is a Solana devnet transaction. Run `npx afriradar verify` to recount them from the chain.",
+      verify: "Every tx above is a Solana devnet transaction. Recount them from the chain in your browser at https://api.afriradar.com/#ledger, or run `npx afriradar verify`.",
     });
   });
   // Paid but unconfirmed at reply time? Once the chain shows the money arrived, the data is released free.
@@ -174,19 +215,38 @@ export async function createApp(deps: Deps) {
     return serveData(c, new URL(row.route, "https://x").pathname, new URL(row.route, "https://x").searchParams);
   });
 
+  app.get("/v1/status", async (c) => c.json(await status()));
+
+  // Solana enforces the analyst's cap: simulate the buyer's real channel-open plus an over-cap claim.
+  app.get("/v1/proof/cap", async (c) => {
+    if (!deps.demoSigner) return c.json({ error: "the live proof needs the demo wallet, which this deployment does not have" }, 503);
+    const ip = c.req.header("cf-connecting-ip") ?? "local";
+    if ((await bump(db, "proof", `ip:${ip}:${hourOf(now())}`, now())) > 20) return c.json({ error: "the live proof runs 20 times an hour per visitor; try later" }, 429);
+    const challenge = await app.fetch(new Request(`https://api.afriradar.com${PRODUCTS.ask.path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: "cap proof" }) }));
+    const header = challenge.headers.get("PAYMENT-REQUIRED");
+    const required = header ? (JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(header), (ch) => ch.charCodeAt(0)))) as PaymentRequired) : null;
+    const requirements = required?.accepts.find((a: PaymentRequirements) => a.scheme === "upto");
+    if (!requirements) return c.json({ error: "could not read this server's own payment challenge" }, 502);
+    return c.json(await capProof({ requirements, buyer: deps.demoSigner, authorizer: deps.authorizer, rpcUrl: deps.rpcUrl, explorer, now }));
+  });
+
   // Read-only RPC relay for browser buyers: they need a blockhash and account reads to build a
   // payment, and the public devnet RPC rate-limits browsers hard. Allow-listed reads only, so the
   // relay cannot send transactions or leak the keyed RPC URL.
-  const RPC_READS = new Set(["getLatestBlockhash", "getAccountInfo", "getMultipleAccounts", "getBalance", "getTokenAccountsByOwner", "getTokenAccountBalance", "getMinimumBalanceForRentExemption", "getSignatureStatuses", "getSlot"]);
+  // getSignaturesForAddress and getTransaction let a visitor recount the treasury from the chain.
+  const RPC_READS = new Set(["getLatestBlockhash", "getAccountInfo", "getMultipleAccounts", "getBalance", "getTokenAccountsByOwner", "getTokenAccountBalance", "getMinimumBalanceForRentExemption", "getSignatureStatuses", "getSlot", "getSignaturesForAddress", "getTransaction"]);
   app.post("/rpc", async (c) => {
     const body = (await c.req.json().catch(() => null)) as { method?: string } | { method?: string }[] | null;
     const calls = Array.isArray(body) ? body : body ? [body] : [];
-    if (!calls.length || calls.length > 10 || calls.some((x) => !RPC_READS.has(String(x?.method)))) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32601, message: `relay allows only: ${[...RPC_READS].join(", ")}` } }, 400);
+    if (!calls.length || calls.length > 25 || calls.some((x) => !RPC_READS.has(String(x?.method)))) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32601, message: `relay allows only: ${[...RPC_READS].join(", ")}` } }, 400);
     const res = await fetch(deps.rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
   });
 
   if (deps.demoSigner) mountDemo(app, { db, signer: deps.demoSigner, rpcUrl: deps.rpcUrl, explorer, now });
+  if (deps.demoSigner && deps.feePayer) mountFaucet(app, { db, source: deps.demoSigner, feePayer: deps.feePayer, rpcUrl: deps.rpcUrl, explorer, now });
+  mountMcp(app, { db, resourceServer, treasury: deps.treasury, status });
+  mountDiscovery(app, { resourceServer, treasury: deps.treasury, tools: mcpTools(db, { status }), now });
 
   // ---------- paid ----------
   app.use(paymentMiddleware(routes, resourceServer));

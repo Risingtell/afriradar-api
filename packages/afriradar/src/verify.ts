@@ -6,19 +6,45 @@
 export const USDC_DEVNET = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;
+type Batch = (calls: { method: string; params: unknown[] }[]) => Promise<unknown[]>;
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function jsonRpc(url: string, fetchImpl: typeof fetch = fetch): Rpc {
   return async (method, params) => {
     for (let attempt = 0; ; attempt++) {
       const res = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
       if (res.status === 429 && attempt < 6) {
-        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        await pause(800 * (attempt + 1));
         continue; // reads are safe to retry
       }
       if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`);
       const body = (await res.json()) as { result?: unknown; error?: { message: string } };
       if (body.error) throw new Error(`${method}: ${body.error.message}`);
       return body.result;
+    }
+  };
+}
+
+/** JSON-RPC batch: many reads in one request, replies matched by id. Rate limits retry the whole batch (reads only). */
+export function jsonRpcBatch(url: string, fetchImpl: typeof fetch = fetch): Batch {
+  return async (calls) => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(calls.map((c, id) => ({ jsonrpc: "2.0", id, method: c.method, params: c.params }))) });
+      const limited = res.status === 429;
+      const body = limited ? null : ((await res.json().catch(() => null)) as { id: number; result?: unknown; error?: { message: string } }[] | null);
+      const itemLimited = Array.isArray(body) && body.some((r) => r.error && /429|rate limit|too many/i.test(r.error.message));
+      if ((limited || itemLimited) && attempt < 2) {
+        await pause(1000 * (attempt + 1));
+        continue;
+      }
+      if (!res.ok || !Array.isArray(body)) throw new Error(`batch of ${calls.length}: HTTP ${res.status}`);
+      const byId = new Map(body.map((r) => [r.id, r]));
+      return calls.map((c, id) => {
+        const r = byId.get(id);
+        if (!r) throw new Error(`${c.method}: no reply in batch`);
+        if (r.error) throw new Error(`${c.method}: ${r.error.message}`);
+        return r.result;
+      });
     }
   };
 }
@@ -46,8 +72,16 @@ async function tokenAccount(rpc: Rpc, owner: string, mint: string): Promise<stri
   return r.value[0].pubkey;
 }
 
+export type Progress = (done: number, total: number) => void;
+
 /** Every transaction that credited the treasury's USDC account, with the amount credited. */
-export async function chainReceipts(rpc: Rpc, treasury: string, mint = USDC_DEVNET, maxPages = 20): Promise<{ account: string; receipts: ChainReceipt[] }> {
+export async function chainReceipts(
+  rpc: Rpc,
+  treasury: string,
+  mint = USDC_DEVNET,
+  maxPages = 20,
+  opts: { batch?: Batch; batchSize?: number; onProgress?: Progress } = {},
+): Promise<{ account: string; receipts: ChainReceipt[] }> {
   const account = await tokenAccount(rpc, treasury, mint);
   const sigs: string[] = [];
   let before: string | undefined;
@@ -58,32 +92,75 @@ export async function chainReceipts(rpc: Rpc, treasury: string, mint = USDC_DEVN
     before = batch[batch.length - 1].signature;
     if (page === maxPages - 1) throw new Error(`more than ${maxPages * 1000} signatures; raise maxPages`);
   }
+  const txs = await fetchTransactions(sigs, { rpc, ...opts });
   const receipts: ChainReceipt[] = [];
-  for (const sig of sigs) {
-    const tx = (await rpc("getTransaction", [sig, { encoding: "jsonParsed", commitment: "confirmed", maxSupportedTransactionVersion: 0 }])) as Tx;
-    if (!tx?.meta || tx.meta.err) continue;
-    const sum = (l?: Balance[]) => (l ?? []).filter((b) => b.owner === treasury && b.mint === mint).reduce((a, b) => a + Number(b.uiTokenAmount.amount), 0);
-    const amount = sum(tx.meta.postTokenBalances) - sum(tx.meta.preTokenBalances);
-    if (amount > 0) receipts.push({ tx: sig, amount, slot: tx.slot, time: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null });
-  }
+  txs.forEach((tx, i) => {
+    const r = receiptOf(tx, sigs[i], treasury, mint);
+    if (r && r.amount > 0) receipts.push(r);
+  });
   return { account, receipts };
 }
 
-export async function verify(opts: { baseUrl?: string; rpcUrl?: string; fetch?: typeof fetch } = {}): Promise<VerifyReport> {
-  const base = (opts.baseUrl ?? "https://api.afriradar.com").replace(/\/$/, "");
-  const f = opts.fetch ?? fetch;
-  const catalog = (await (await f(`${base}/v1`)).json()) as { payTo: string; asset: { mint: string } };
-  // Page through the whole ledger; stopping at the first page would under-count silently.
-  const all: { tx: string | null; status: string; amount: string }[] = [];
+type Reads = { rpc: Rpc; batch?: Batch; batchSize?: number; onProgress?: Progress };
+
+/** Fetches transactions in batches. A rate-limited batch is retried at half the size, down to one at a time. */
+async function fetchTransactions(sigs: string[], r: Reads): Promise<Tx[]> {
+  const params = (sig: string) => [sig, { encoding: "jsonParsed", commitment: "confirmed", maxSupportedTransactionVersion: 0 }];
+  const out: Tx[] = [];
+  let size = r.batch ? Math.max(1, r.batchSize ?? 20) : 1;
+  for (let i = 0; i < sigs.length; ) {
+    const chunk = sigs.slice(i, i + size);
+    try {
+      const txs = size > 1 && r.batch ? await r.batch(chunk.map((sig) => ({ method: "getTransaction", params: params(sig) }))) : [await r.rpc("getTransaction", params(chunk[0]))];
+      out.push(...(txs as Tx[]));
+      i += chunk.length;
+      r.onProgress?.(i, sigs.length);
+    } catch (e) {
+      if (size > 1 && /429|rate limit|too many/i.test(String(e))) {
+        size = Math.max(1, size >> 1);
+        continue;
+      }
+      throw e;
+    }
+  }
+  return out;
+}
+
+/** What one transaction credited to the treasury's USDC balance; null if it failed or is unknown. */
+function receiptOf(tx: Tx, sig: string, treasury: string, mint: string): ChainReceipt | null {
+  if (!tx?.meta || tx.meta.err) return null;
+  const sum = (l?: Balance[]) => (l ?? []).filter((b) => b.owner === treasury && b.mint === mint).reduce((a, b) => a + Number(b.uiTokenAmount.amount), 0);
+  return { tx: sig, amount: sum(tx.meta.postTokenBalances) - sum(tx.meta.preTokenBalances), slot: tx.slot, time: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null };
+}
+
+type LedgerRow = { tx: string | null; status: string; amount: string };
+
+/** The API's settled ledger rows, newest first, deduplicated by tx. Pages until `max` rows or the end. */
+async function settledRows(base: string, f: typeof fetch, max = Infinity): Promise<LedgerRow[]> {
+  const all: LedgerRow[] = [];
   for (let offset = 0; ; offset += 200) {
-    const page = (await (await f(`${base}/v1/payments?limit=200&offset=${offset}`)).json()) as { recent: typeof all };
+    const page = (await (await f(`${base}/v1/payments?limit=200&offset=${offset}`)).json()) as { recent: LedgerRow[] };
     all.push(...page.recent);
-    if (page.recent.length < 200) break;
+    if (page.recent.length < 200 || all.filter((r) => r.status === "settled").length >= max) break;
   }
   // A payment arriving mid-scan shifts the pages by one, so the same row can appear twice: key by tx.
-  const ledger = [...new Map(all.filter((r) => r.status === "settled" && r.tx).map((r) => [r.tx, r])).values()];
-  const rpc = jsonRpc(opts.rpcUrl ?? "https://api.devnet.solana.com", f);
-  const { account, receipts } = await chainReceipts(rpc, catalog.payTo, catalog.asset.mint);
+  return [...new Map(all.filter((r) => r.status === "settled" && r.tx).map((r) => [r.tx, r])).values()];
+}
+
+const catalogOf = async (base: string, f: typeof fetch) => (await (await f(`${base}/v1`)).json()) as { payTo: string; asset: { mint: string } };
+type Opts = { baseUrl?: string; rpcUrl?: string; fetch?: typeof fetch; batchSize?: number; onProgress?: Progress };
+const setup = (opts: Opts) => {
+  const f = opts.fetch ?? fetch;
+  const rpcUrl = opts.rpcUrl ?? "https://api.devnet.solana.com";
+  return { base: (opts.baseUrl ?? "https://api.afriradar.com").replace(/\/$/, ""), f, rpc: jsonRpc(rpcUrl, f), batch: jsonRpcBatch(rpcUrl, f) };
+};
+
+/** Full recount: every receipt the treasury ever had, against every settled ledger row. */
+export async function verify(opts: Opts = {}): Promise<VerifyReport> {
+  const { base, f, rpc, batch } = setup(opts);
+  const catalog = await catalogOf(base, f);
+  const ledger = await settledRows(base, f);
+  const { account, receipts } = await chainReceipts(rpc, catalog.payTo, catalog.asset.mint, 20, { batch, batchSize: opts.batchSize, onProgress: opts.onProgress });
   const byTx = new Map(receipts.map((r) => [r.tx, r]));
   const missing: VerifyReport["missing"] = [];
   let matched = 0;
@@ -103,4 +180,20 @@ export async function verify(opts: { baseUrl?: string; rpcUrl?: string; fetch?: 
     unlisted: receipts.filter((r) => !listed.has(r.tx)),
     ok: missing.length === 0,
   };
+}
+
+export type RecentReport = { treasury: string; checked: number; matched: number; missing: VerifyReport["missing"]; ok: boolean };
+
+/** Quick check: reads only the latest `count` settled ledger rows from the chain and compares each amount. */
+export async function verifyRecent(opts: Opts & { count?: number } = {}): Promise<RecentReport> {
+  const { base, f, rpc, batch } = setup(opts);
+  const catalog = await catalogOf(base, f);
+  const rows = (await settledRows(base, f, opts.count ?? 50)).slice(0, opts.count ?? 50);
+  const txs = await fetchTransactions(rows.map((r) => r.tx as string), { rpc, batch, batchSize: opts.batchSize, onProgress: opts.onProgress });
+  const missing: VerifyReport["missing"] = [];
+  rows.forEach((row, i) => {
+    const onChain = receiptOf(txs[i], row.tx as string, catalog.payTo, catalog.asset.mint);
+    if (!onChain || onChain.amount !== Number(row.amount)) missing.push({ tx: row.tx as string, ledgerAmount: Number(row.amount), chainAmount: onChain?.amount ?? null });
+  });
+  return { treasury: catalog.payTo, checked: rows.length, matched: rows.length - missing.length, missing, ok: missing.length === 0 };
 }
