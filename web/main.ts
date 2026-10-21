@@ -6,7 +6,7 @@ import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
 import type { TransactionModifyingSigner } from "@solana/kit";
 import type { Wallet } from "@wallet-standard/base";
-import { connect, onWalletsChange, solanaWallets } from "./wallet.js";
+import { connect, disconnect, onWalletsChange, signsMainnetOnly, solanaWallets } from "./wallet.js";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
@@ -21,6 +21,7 @@ type LedgerRow = { tx: string | null; route: string; scheme: string; amount: str
 let mode: "ask" | "buy" = "ask";
 let payWith: "demo" | "own" = "demo";
 let own: { wallet: Wallet; signer: TransactionModifyingSigner; address: string } | null = null;
+const WALLET_HINT = $("wallet-line").innerHTML;
 
 // ---------- small safe markdown: escape first, then bold and pipe tables ----------
 function renderAnswer(md: string): string {
@@ -113,14 +114,24 @@ function status(text: string, kind: "" | "ok" | "bad" = "") {
 function renderWallets() {
   const box = $("wallet-buttons");
   if (own) {
-    box.innerHTML = `<p class="wallet-line">Connected: ${esc(own.wallet.name)} ${esc(own.address)}</p>`;
+    box.innerHTML = `<p class="wallet-line">Connected: ${esc(own.wallet.name)} ${esc(own.address)}</p><button class="btn btn--ghost" type="button" id="disconnect">Disconnect</button>`;
+    $("disconnect").addEventListener("click", async () => {
+      const w = own?.wallet;
+      own = null;
+      $("wallet-line").innerHTML = WALLET_HINT;
+      renderWallets();
+      if (w) await disconnect(w).catch(() => undefined);
+    });
     void showBalance(own.address);
     return;
   }
-  const ws = solanaWallets();
-  box.innerHTML = ws.length
+  const all = solanaWallets();
+  const ws = all.filter((w) => !signsMainnetOnly(w));
+  const mainnetOnly = all.filter(signsMainnetOnly).map((w) => esc(w.name)).join(", ");
+  box.innerHTML = (ws.length
     ? ws.map((w, i) => `<button class="btn btn--ghost" type="button" data-w="${i}">Connect ${esc(w.name)}</button>`).join("")
-    : `<p class="wallet-line">No Solana wallet found in this browser. Install Phantom or Solflare, or use the demo wallet.</p>`;
+    : `<p class="wallet-line">No Solana wallet that can pay on devnet is turned on in this browser. Install or turn on Phantom, Solflare or Backpack, or use the demo wallet.</p>`)
+    + (mainnetOnly ? `<p class="wallet-line">${mainnetOnly} is not listed: it signs Solana payments on mainnet only, so it cannot pay here on devnet.</p>` : "");
   box.querySelectorAll<HTMLButtonElement>("button[data-w]").forEach((b) =>
     b.addEventListener("click", async () => {
       const w = ws[Number(b.dataset.w)];

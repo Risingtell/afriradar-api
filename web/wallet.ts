@@ -10,10 +10,19 @@ import {
 export const DEVNET_CHAIN = "solana:devnet";
 
 type Connect = { connect: () => Promise<{ accounts: readonly WalletAccount[] }> };
+type Disconnect = { disconnect: () => Promise<void> };
 type SignTx = { signTransaction: (...inputs: { account: WalletAccount; transaction: Uint8Array; chain?: string }[]) => Promise<{ signedTransaction: Uint8Array }[]> };
 
 export function solanaWallets(): Wallet[] {
   return getWallets().get().filter((w) => "standard:connect" in w.features && "solana:signTransaction" in w.features);
+}
+
+// MetaMask's Solana wallet connects on mainnet and signs on that network whatever chain we pass
+// (checked in its 13.52 inpage script), so it cannot pay for a devnet request.
+export const signsMainnetOnly = (w: Wallet) => /^metamask/i.test(w.name);
+
+export async function disconnect(wallet: Wallet): Promise<void> {
+  await (wallet.features["standard:disconnect"] as Disconnect | undefined)?.disconnect();
 }
 
 export function onWalletsChange(cb: () => void): () => void {
