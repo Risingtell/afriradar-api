@@ -82,7 +82,7 @@ async function main() {
     out(
       [
         `network         Solana ${r.network}`,
-        `treasury       ${r.treasury} (USDC account ${r.tokenAccount})`,
+        `treasury        ${r.treasury} (USDC account ${r.tokenAccount})`,
         `on chain        ${r.chain.receipts} payments, ${r.chain.usdc} USDC`,
         `API ledger      ${r.ledger.settled} settled, ${r.ledger.usdc} USDC`,
         `matched         ${r.matched} of ${r.ledger.settled} ledger rows found on chain for the exact amount`,

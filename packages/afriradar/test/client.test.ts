@@ -1,9 +1,10 @@
-// Offline checks of the SDK: wallet parsing, free calls, and refusing to pay without a signer.
+// Offline checks of the SDK: wallet parsing, free calls, refusing to pay without a signer, and refusal messages.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/core/http";
 import { describe, expect, it } from "vitest";
-import { createAfriRadar, AfriRadarError } from "../src/client.js";
+import { createAfriRadar, AfriRadarError, refusal } from "../src/client.js";
 import { createWallet, loadSigner, parseSecret } from "../src/wallet.js";
 
 describe("wallet", () => {
@@ -52,5 +53,21 @@ describe("client", () => {
   it("rejects a malformed fund id instead of building a wrong URL", async () => {
     const api = createAfriRadar({ baseUrl: "https://api.test", fetch: fakeFetch });
     expect(() => api.fund("no-slash")).toThrow(/category\/slug/);
+  });
+
+  it("explains a refused payment with the server's reason and the network", () => {
+    const header = encodePaymentRequiredHeader({ x402Version: 2, error: "invalid_exact_svm_transaction_simulation_failed", resource: { url: "https://api.test/v1/kenya/unit-trusts" }, accepts: [] });
+    const message = refusal(new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": header } }), "Payer1111", "mainnet");
+    expect(message).toBe("payment refused (invalid_exact_svm_transaction_simulation_failed); you were not charged. Check that Payer1111 holds enough USDC on Solana mainnet.");
+    expect(refusal(new Response("{}", { status: 402 }), "Payer1111", "devnet")).toMatch(/^payment refused; you were not charged\..*Solana devnet\.$/);
+  });
+
+  it("does not claim nothing was charged when a settlement may still land", () => {
+    const failed = (errorReason: string) => new Response("{}", { status: 402, headers: { "PAYMENT-RESPONSE": encodePaymentResponseHeader({ success: false, errorReason, transaction: "Tx1111", network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" }) } });
+    const pending = refusal(failed("settlement_pending"), "Payer1111", "mainnet", "https://api.test");
+    expect(pending).not.toMatch(/not charged/);
+    expect(pending).toMatch(/Tx1111 was sent but not confirmed/);
+    expect(pending).toMatch(/https:\/\/api\.test\/v1\/redeem\/Tx1111/);
+    expect(refusal(failed("transaction_failed"), "Payer1111", "mainnet")).toMatch(/^payment refused \(transaction_failed\); you were not charged\./);
   });
 });

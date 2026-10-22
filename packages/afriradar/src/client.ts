@@ -2,6 +2,7 @@
 // and returns the data together with the on-chain receipt.
 import type { TransactionSigner } from "@solana/kit";
 import { x402Client } from "@x402/core/client";
+import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
@@ -31,6 +32,28 @@ export class AfriRadarError extends Error {
   constructor(message: string, readonly status: number, readonly body?: unknown) {
     super(message);
   }
+}
+
+/**
+ * Why a paid request came back 402. A refused payment moved no money and says why in PAYMENT-REQUIRED.
+ * A failed settlement says why in PAYMENT-RESPONSE; "settlement_pending" means the transaction was
+ * sent and may still land, so the buyer is told how to collect instead of being told nothing was charged.
+ */
+export function refusal(res: Response, payer: string, network: Network, base = DEFAULT_BASE_URL): string {
+  const read = <T>(name: string, decode: (header: string) => T): T | undefined => {
+    const header = res.headers.get(name);
+    try {
+      return header ? decode(header) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const settlement = read("PAYMENT-RESPONSE", decodePaymentResponseHeader);
+  if (settlement?.errorReason === "settlement_pending" && settlement.transaction) {
+    return `payment ${settlement.transaction} was sent but not confirmed in time; check it on Solana before paying again. If it lands, ${base}/v1/redeem/${settlement.transaction} releases the data free.`;
+  }
+  const reason = settlement?.errorReason ?? read("PAYMENT-REQUIRED", decodePaymentRequiredHeader)?.error;
+  return `payment refused${reason ? ` (${reason})` : ""}; you were not charged. Check that ${payer} holds enough USDC on Solana ${network}.`;
 }
 
 export type AfriRadarOptions = {
@@ -84,9 +107,10 @@ export function createAfriRadar(opts: AfriRadarOptions) {
   }
 
   async function paid<T>(path: string, init?: RequestInit): Promise<Paid<T>> {
-    if (!paidFetch) throw new AfriRadarError("this call is paid: pass a signer to createAfriRadar", 402);
+    if (!paidFetch || !signer) throw new AfriRadarError("this call is paid: pass a signer to createAfriRadar", 402);
     const res = await paidFetch(`${base}${path}`, init);
     const body = await res.json().catch(() => null);
+    if (res.status === 402) throw new AfriRadarError(refusal(res, signer.address, network, base), 402, body);
     if (!res.ok) throw new AfriRadarError((body as { error?: string })?.error ?? `HTTP ${res.status}`, res.status, body);
     const header = res.headers.get("PAYMENT-RESPONSE");
     const settled = header ? decodePaymentResponseHeader(header) : null;

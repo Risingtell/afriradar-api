@@ -11,7 +11,7 @@ const CATEGORIES = ["money-market", "bond", "dollar", "equity", "balanced", "sha
 export async function runMcp(opts: { baseUrl?: string; rpcUrl?: string; network?: Network } = {}) {
   const budget = process.env.AFRIRADAR_BUDGET ? Number(process.env.AFRIRADAR_BUDGET) : 0.5;
   const api = createAfriRadar({ signer: await loadSigner(), baseUrl: opts.baseUrl, rpcUrl: opts.rpcUrl, network: opts.network, budget });
-  const server = new McpServer({ name: "afriradar", version: "0.1.1" });
+  const server = new McpServer({ name: "afriradar", version: "0.1.2" });
   const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v) }] });
   const paid = async <T>(p: Promise<Paid<T>>) => {
     const r = await p;

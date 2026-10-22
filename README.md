@@ -164,7 +164,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 82 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
+npm test                 # 84 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
 npm run typecheck
 ```
 
