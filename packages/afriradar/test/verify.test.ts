@@ -65,6 +65,20 @@ describe("verify", () => {
     expect(r).toMatchObject({ checked: 2, matched: 1, ok: false, missing: [{ tx: "bad", ledgerAmount: 7, chainAmount: 2000 }] });
   });
 
+  it("recounts mainnet from mainnet rows and the mainnet USDC mint the API declares", async () => {
+    const w = world([{ tx: "m", amount: 1000 }], { m: 1000 });
+    const asked: string[] = [];
+    const twoNetworks = (async (url: string, init?: RequestInit) => {
+      asked.push(url);
+      if (url === "https://api.test/v1") return Response.json({ payTo: TREASURY, asset: { mint: "DevnetMint" }, networks: [{ id: "devnet", asset: { mint: "DevnetMint" } }, { id: "mainnet", asset: { mint: MINT } }] });
+      return w.fake(url, init);
+    }) as unknown as typeof fetch;
+    const r = await verify({ baseUrl: "https://api.test", network: "mainnet", rpcUrl: "https://rpc.test", fetch: twoNetworks });
+    expect(r).toMatchObject({ network: "mainnet", ok: true, matched: 1 });
+    expect(asked.filter((u) => u.includes("/v1/payments")).every((u) => u.endsWith("&network=mainnet"))).toBe(true);
+    await expect(verify({ baseUrl: "https://api.test", network: "mainnet", rpcUrl: "https://rpc.test", fetch: w.fake })).rejects.toThrow(/does not sell on mainnet/);
+  });
+
   it("fails when a ledger row is not on chain at all", async () => {
     const w = world([{ tx: "ghost", amount: 1000 }], { a: 1000 });
     const r = await verify({ baseUrl: "https://api.test", rpcUrl: "https://rpc.test", fetch: w.fake });

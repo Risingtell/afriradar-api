@@ -175,9 +175,16 @@ export const quarterGuard = (answer: string, data: { tool: string }[], latest: s
 
 const tokenPrice = (prompt: number, completion: number) => Math.ceil(((prompt + completion) * ASK_PRICING.perThousandTokens) / 1000);
 
+/** The question rule, also checked before a paid request opens a payment channel. */
+export const questionProblem = (question: string): string | null => {
+  const n = question.trim().length;
+  return n < 3 || n > 500 ? "question must be 3 to 500 characters" : null;
+};
+
 export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: number; maxSteps?: number } = {}): Promise<AskResult> {
   const text = question.trim();
-  if (text.length < 3 || text.length > 500) throw new AskError("question must be 3 to 500 characters", 400);
+  const problem = questionProblem(text);
+  if (problem) throw new AskError(problem, 400);
   const ceiling = opts.ceiling ?? PRODUCTS.ask.price;
   const maxSteps = opts.maxSteps ?? 5;
   const bill: AskBill = { ceiling, base: ASK_PRICING.base, data: [], tokens: { prompt: 0, completion: 0, price: 0 }, total: ASK_PRICING.base };

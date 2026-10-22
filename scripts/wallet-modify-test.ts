@@ -39,8 +39,9 @@ const wallet = {
   },
 } as unknown as Wallet;
 
-const { signer } = await connect(wallet);
-const paid = wrapFetchWithPayment(fetch, new x402Client().register("solana:*", new ExactSvmScheme(signer, { rpcUrl: RPC })).register("solana:*", new UptoSvmScheme(signer, { rpcUrl: RPC })));
+const { signer } = await connect(wallet, () => "solana:devnet");
+const DEVNET = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+const paid = wrapFetchWithPayment(fetch, new x402Client().register(DEVNET, new ExactSvmScheme(signer, { rpcUrl: RPC })).register(DEVNET, new UptoSvmScheme(signer, { rpcUrl: RPC })));
 const ask = url.endsWith("/v1/ask");
 const res = await paid(url, ask ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: "How big is the Kenyan unit trust market?" }) } : undefined);
 const header = res.headers.get("PAYMENT-RESPONSE");

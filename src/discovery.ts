@@ -5,7 +5,7 @@ import type { Hono } from "hono";
 import type { x402ResourceServer } from "@x402/core/server";
 import type { Network, PaymentRequirements } from "@x402/core/types";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
-import { NETWORK, PRODUCTS, usd, type ProductId } from "./catalog.js";
+import { PRODUCTS, usd, type ProductId } from "./catalog.js";
 import { CATEGORIES } from "./data/model.js";
 import type { McpTool } from "./mcp.js";
 
@@ -43,13 +43,13 @@ export const discoveryExtension = (id: ProductId) => declareDiscoveryExtension(D
 const LIVE_ONLY = ["recentBlockhash", "lastValidBlockHeight", "recentSlot"];
 const forListing = (r: PaymentRequirements) => ({ ...r, extra: Object.fromEntries(Object.entries(r.extra ?? {}).filter(([k]) => !LIVE_ONLY.includes(k))) });
 
-export function mountDiscovery(app: Hono, opts: { resourceServer: x402ResourceServer; treasury: string; tools: McpTool[]; now: () => Date }) {
+export function mountDiscovery(app: Hono, opts: { resourceServer: x402ResourceServer; treasury: string; networks: Network[]; tools: McpTool[]; now: () => Date }) {
   let cached: { at: number; body: unknown } | undefined;
   app.get("/discovery/resources", async (c) => {
     if (cached && Date.now() - cached.at < 10 * 60_000) return c.json(cached.body);
     const lastUpdated = opts.now().toISOString();
     const accepts = async (scheme: "exact" | "upto", price: number) =>
-      (await opts.resourceServer.buildPaymentRequirements({ scheme, network: NETWORK as Network, payTo: opts.treasury, price: usd(price) })).map(forListing);
+      (await Promise.all(opts.networks.map((network) => opts.resourceServer.buildPaymentRequirements({ scheme, network, payTo: opts.treasury, price: usd(price) })))).flat().map(forListing);
     const http = await Promise.all(
       (Object.keys(PRODUCTS) as ProductId[]).map(async (id) => {
         const p = PRODUCTS[id];

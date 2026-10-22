@@ -4,6 +4,11 @@
 // (payments made to other deployments of the same treasury); the ledger may never hold more.
 
 export const USDC_DEVNET = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+export const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/** Which chain to recount. The ledger's rows and the treasury's receipts are read for that network only. */
+export type Network = "devnet" | "mainnet";
+const PUBLIC_RPC: Record<Network, string> = { devnet: "https://api.devnet.solana.com", mainnet: "https://api.mainnet-beta.solana.com" };
 
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;
 type Batch = (calls: { method: string; params: unknown[] }[]) => Promise<unknown[]>;
@@ -54,6 +59,7 @@ type Tx = { slot: number; blockTime: number | null; meta: { err: unknown; preTok
 
 export type ChainReceipt = { tx: string; amount: number; slot: number; time: string | null };
 export type VerifyReport = {
+  network: Network;
   treasury: string;
   tokenAccount: string;
   chain: { receipts: number; usdc: number };
@@ -135,11 +141,11 @@ function receiptOf(tx: Tx, sig: string, treasury: string, mint: string): ChainRe
 
 type LedgerRow = { tx: string | null; status: string; amount: string };
 
-/** The API's settled ledger rows, newest first, deduplicated by tx. Pages until `max` rows or the end. */
-async function settledRows(base: string, f: typeof fetch, max = Infinity): Promise<LedgerRow[]> {
+/** The API's settled ledger rows on one network, newest first, deduplicated by tx. Pages until `max` rows or the end. */
+async function settledRows(base: string, f: typeof fetch, network: Network, max = Infinity): Promise<LedgerRow[]> {
   const all: LedgerRow[] = [];
   for (let offset = 0; ; offset += 200) {
-    const page = (await (await f(`${base}/v1/payments?limit=200&offset=${offset}`)).json()) as { recent: LedgerRow[] };
+    const page = (await (await f(`${base}/v1/payments?limit=200&offset=${offset}&network=${network}`)).json()) as { recent: LedgerRow[] };
     all.push(...page.recent);
     if (page.recent.length < 200 || all.filter((r) => r.status === "settled").length >= max) break;
   }
@@ -147,20 +153,28 @@ async function settledRows(base: string, f: typeof fetch, max = Infinity): Promi
   return [...new Map(all.filter((r) => r.status === "settled" && r.tx).map((r) => [r.tx, r])).values()];
 }
 
-const catalogOf = async (base: string, f: typeof fetch) => (await (await f(`${base}/v1`)).json()) as { payTo: string; asset: { mint: string } };
-type Opts = { baseUrl?: string; rpcUrl?: string; fetch?: typeof fetch; batchSize?: number; onProgress?: Progress };
+type Catalog = { payTo: string; asset: { mint: string }; networks?: { id: string; asset: { mint: string } }[] };
+/** The treasury and the USDC mint it is paid in on `network`, as the API itself declares them. */
+const catalogOf = async (base: string, f: typeof fetch, network: Network) => {
+  const c = (await (await f(`${base}/v1`)).json()) as Catalog;
+  const declared = c.networks?.find((n) => n.id === network)?.asset.mint;
+  if (network === "mainnet" && !declared) throw new Error("this API does not sell on mainnet");
+  return { payTo: c.payTo, mint: declared ?? c.asset.mint };
+};
+type Opts = { baseUrl?: string; network?: Network; rpcUrl?: string; fetch?: typeof fetch; batchSize?: number; onProgress?: Progress };
 const setup = (opts: Opts) => {
   const f = opts.fetch ?? fetch;
-  const rpcUrl = opts.rpcUrl ?? "https://api.devnet.solana.com";
-  return { base: (opts.baseUrl ?? "https://api.afriradar.com").replace(/\/$/, ""), f, rpc: jsonRpc(rpcUrl, f), batch: jsonRpcBatch(rpcUrl, f) };
+  const network = opts.network ?? "devnet";
+  const rpcUrl = opts.rpcUrl ?? PUBLIC_RPC[network];
+  return { network, base: (opts.baseUrl ?? "https://api.afriradar.com").replace(/\/$/, ""), f, rpc: jsonRpc(rpcUrl, f), batch: jsonRpcBatch(rpcUrl, f) };
 };
 
 /** Full recount: every receipt the treasury ever had, against every settled ledger row. */
 export async function verify(opts: Opts = {}): Promise<VerifyReport> {
-  const { base, f, rpc, batch } = setup(opts);
-  const catalog = await catalogOf(base, f);
-  const ledger = await settledRows(base, f);
-  const { account, receipts } = await chainReceipts(rpc, catalog.payTo, catalog.asset.mint, 20, { batch, batchSize: opts.batchSize, onProgress: opts.onProgress });
+  const { network, base, f, rpc, batch } = setup(opts);
+  const catalog = await catalogOf(base, f, network);
+  const ledger = await settledRows(base, f, network);
+  const { account, receipts } = await chainReceipts(rpc, catalog.payTo, catalog.mint, 20, { batch, batchSize: opts.batchSize, onProgress: opts.onProgress });
   const byTx = new Map(receipts.map((r) => [r.tx, r]));
   const missing: VerifyReport["missing"] = [];
   let matched = 0;
@@ -171,6 +185,7 @@ export async function verify(opts: Opts = {}): Promise<VerifyReport> {
   }
   const listed = new Set(ledger.map((r) => r.tx));
   return {
+    network,
     treasury: catalog.payTo,
     tokenAccount: account,
     chain: { receipts: receipts.length, usdc: receipts.reduce((a, r) => a + r.amount, 0) / 1e6 },
@@ -182,18 +197,18 @@ export async function verify(opts: Opts = {}): Promise<VerifyReport> {
   };
 }
 
-export type RecentReport = { treasury: string; checked: number; matched: number; missing: VerifyReport["missing"]; ok: boolean };
+export type RecentReport = { network: Network; treasury: string; checked: number; matched: number; missing: VerifyReport["missing"]; ok: boolean };
 
 /** Quick check: reads only the latest `count` settled ledger rows from the chain and compares each amount. */
 export async function verifyRecent(opts: Opts & { count?: number } = {}): Promise<RecentReport> {
-  const { base, f, rpc, batch } = setup(opts);
-  const catalog = await catalogOf(base, f);
-  const rows = (await settledRows(base, f, opts.count ?? 50)).slice(0, opts.count ?? 50);
+  const { network, base, f, rpc, batch } = setup(opts);
+  const catalog = await catalogOf(base, f, network);
+  const rows = (await settledRows(base, f, network, opts.count ?? 50)).slice(0, opts.count ?? 50);
   const txs = await fetchTransactions(rows.map((r) => r.tx as string), { rpc, batch, batchSize: opts.batchSize, onProgress: opts.onProgress });
   const missing: VerifyReport["missing"] = [];
   rows.forEach((row, i) => {
-    const onChain = receiptOf(txs[i], row.tx as string, catalog.payTo, catalog.asset.mint);
+    const onChain = receiptOf(txs[i], row.tx as string, catalog.payTo, catalog.mint);
     if (!onChain || onChain.amount !== Number(row.amount)) missing.push({ tx: row.tx as string, ledgerAmount: Number(row.amount), chainAmount: onChain?.amount ?? null });
   });
-  return { treasury: catalog.payTo, checked: rows.length, matched: rows.length - missing.length, missing, ok: missing.length === 0 };
+  return { network, treasury: catalog.payTo, checked: rows.length, matched: rows.length - missing.length, missing, ok: missing.length === 0 };
 }

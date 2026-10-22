@@ -7,6 +7,7 @@ import { x402Client } from "@x402/core/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
+import { NETWORK } from "./catalog.js";
 import type { Db } from "./db.js";
 import { bump, dayOf, hourOf } from "./limits.js";
 
@@ -29,14 +30,14 @@ async function allow(db: Db, ip: string, now: Date): Promise<string | null> {
   return null;
 }
 
-/** A fetch that pays this same app's paid routes in-process with `signer`, through the normal x402 client. */
+/** A fetch that pays this same app's paid routes in-process with `signer`, through the normal x402 client, on devnet only. */
 export function localPaidFetch(app: Hono, signer: TransactionSigner, rpcUrl: string): typeof fetch {
   const local = ((input: RequestInfo | URL, init?: RequestInit) => app.fetch(new Request(input, init))) as typeof fetch;
   return wrapFetchWithPayment(
     local,
     new x402Client()
-      .register("solana:*", new ExactSvmScheme(signer, { rpcUrl }))
-      .register("solana:*", new UptoSvmScheme(signer, { rpcUrl }))
+      .register(NETWORK, new ExactSvmScheme(signer, { rpcUrl }))
+      .register(NETWORK, new UptoSvmScheme(signer, { rpcUrl }))
       .setSpendControls({ maxAmountPerPayment: "$0.05" }),
   );
 }

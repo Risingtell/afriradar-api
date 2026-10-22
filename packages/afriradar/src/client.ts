@@ -8,6 +8,11 @@ import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
 
 export const DEFAULT_BASE_URL = "https://api.afriradar.com";
 export const DEVNET_RPC = "https://api.devnet.solana.com";
+export const MAINNET_RPC = "https://api.mainnet-beta.solana.com";
+
+/** devnet pays with free test USDC; mainnet pays real USDC. */
+export type Network = "devnet" | "mainnet";
+const CAIP2 = { devnet: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", mainnet: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" } as const;
 
 export type Category = "money-market" | "bond" | "dollar" | "equity" | "balanced" | "shariah" | "reit" | "ethical" | "specialised";
 export type RankBy = "yield_ytd" | "yield_wtd" | "nav" | "unitholders";
@@ -32,7 +37,9 @@ export type AfriRadarOptions = {
   /** Pays for data. Any @solana/kit TransactionSigner works: a KeyPairSigner, or a wallet adapter. Free calls need none. */
   signer?: TransactionSigner;
   baseUrl?: string;
-  /** Used to build payment transactions. Defaults to the public devnet RPC. */
+  /** Where to pay. Default devnet (free test USDC); mainnet spends real USDC. */
+  network?: Network;
+  /** Used to build payment transactions. Defaults to the public RPC of `network`. */
   rpcUrl?: string;
   /** Refuse any single payment above this (USDC). Default 0.05, the /v1/ask ceiling. */
   maxPerRequest?: number;
@@ -41,11 +48,11 @@ export type AfriRadarOptions = {
   fetch?: typeof fetch;
 };
 
-const explorerTx = (sig: string) => `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
-
 export function createAfriRadar(opts: AfriRadarOptions) {
   const base = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
-  const rpcUrl = opts.rpcUrl ?? DEVNET_RPC;
+  const network = opts.network ?? "devnet";
+  const rpcUrl = opts.rpcUrl ?? (network === "mainnet" ? MAINNET_RPC : DEVNET_RPC);
+  const explorerTx = (sig: string) => `https://explorer.solana.com/tx/${sig}${network === "mainnet" ? "" : "?cluster=devnet"}`;
   const maxPer = Math.round((opts.maxPerRequest ?? 0.05) * 1e6);
   const budget = opts.budget === undefined ? Infinity : Math.round(opts.budget * 1e6);
   let spent = 0;
@@ -55,9 +62,10 @@ export function createAfriRadar(opts: AfriRadarOptions) {
   // The price each request agreed to pay, by resource URL. Exact-scheme receipts carry no amount,
   // so this is where the client learns what it actually paid.
   const agreed = new Map<string, number>();
+  // Registered for one network only, so the client never pays on a network it was not asked to.
   const paidFetch = signer ? wrapFetchWithPayment(raw, new x402Client()
-    .register("solana:*", new ExactSvmScheme(signer, { rpcUrl }))
-    .register("solana:*", new UptoSvmScheme(signer, { rpcUrl }))
+    .register(CAIP2[network], new ExactSvmScheme(signer, { rpcUrl }))
+    .register(CAIP2[network], new UptoSvmScheme(signer, { rpcUrl }))
     .setSpendControls({ maxAmountPerPayment: `$${maxPer / 1e6}` })
     .onBeforePaymentCreation(async ({ selectedRequirements }) => {
       const amount = Number(selectedRequirements.amount);

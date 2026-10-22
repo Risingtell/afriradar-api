@@ -40,14 +40,14 @@ const schema = (properties: Record<string, unknown> = {}, required: string[] = [
 const CATEGORY = { type: "string", enum: Object.keys(CATEGORIES), description: "Fund category" };
 const FUND_ID = { type: "string", description: 'Fund id from afriradar_search, e.g. "money-market/aiico-money-market-fund"' };
 
-export function mcpTools(db: Db, extra: { status: () => Promise<unknown> }): McpTool[] {
+export function mcpTools(db: Db, extra: { status: () => Promise<unknown>; networks?: string[] }): McpTool[] {
   return [
     {
       name: "afriradar_catalog",
-      description: "Free. What AfriRadar sells, the price of each product in USDC, and how to pay (x402 on Solana devnet).",
+      description: "Free. What AfriRadar sells, the price of each product in USDC, and how to pay (x402 on Solana: devnet test USDC, or real USDC on mainnet).",
       inputSchema: schema(),
       run: async () => ({
-        network: NETWORK,
+        networks: extra.networks ?? [NETWORK],
         products: Object.entries(PRODUCTS).map(([id, p]) => ({ id, http: `${p.method} https://api.afriradar.com${p.path}`, price: usd(p.price), scheme: p.scheme, summary: p.summary })),
         mcp: "Paid tools here charge the same prices over x402 inside MCP. The analyst is HTTP only: POST https://api.afriradar.com/v1/ask.",
       }),
@@ -144,8 +144,9 @@ const asResult = (data: unknown): ToolResult => ({
 });
 const errorResult = (message: string): ToolResult => ({ content: [{ type: "text", text: message }], isError: true });
 
-export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402ResourceServer; treasury: string; status: () => Promise<unknown> }) {
-  const tools = mcpTools(opts.db, { status: opts.status });
+/** `networks`: where paid tools accept payment, devnet first. */
+export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402ResourceServer; treasury: string; networks: Network[]; status: () => Promise<unknown> }) {
+  const tools = mcpTools(opts.db, { status: opts.status, networks: opts.networks });
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   const plain = (t: McpTool) => async (args: Args): Promise<ToolResult> => {
@@ -162,7 +163,7 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
     (paidHandlers ??= (async () => {
       const out = new Map<string, (args: Args, extra: { _meta?: Record<string, unknown> }) => Promise<ToolResult>>();
       for (const t of tools.filter((x) => x.price)) {
-        const accepts = await opts.resourceServer.buildPaymentRequirements({ scheme: "exact", network: NETWORK as Network, payTo: opts.treasury, price: usd(t.price as number) });
+        const accepts = (await Promise.all(opts.networks.map((network) => opts.resourceServer.buildPaymentRequirements({ scheme: "exact", network, payTo: opts.treasury, price: usd(t.price as number) })))).flat();
         const wrap = createPaymentWrapper(opts.resourceServer, {
           accepts,
           resource: { url: `mcp://tool/${t.name}`, description: t.description, mimeType: "application/json" },
@@ -189,7 +190,7 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: MCP_SERVER,
-          instructions: "African fund data from the regulators (SEC Nigeria weekly, CMA Kenya quarterly). Tools marked Free answer directly; priced tools are paid per call in devnet USDC on Solana over x402, using an x402 MCP client. Start with afriradar_search to find ids.",
+          instructions: "African fund data from the regulators (SEC Nigeria weekly, CMA Kenya quarterly). Tools marked Free answer directly; priced tools are paid per call in USDC on Solana over x402 (devnet test USDC, or real USDC on mainnet), using an x402 MCP client. Start with afriradar_search to find ids.",
         });
       }
       case "ping":

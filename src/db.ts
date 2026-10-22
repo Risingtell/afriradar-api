@@ -41,9 +41,11 @@ CREATE TABLE IF NOT EXISTS payments (
   payer TEXT,
   status TEXT NOT NULL,
   detail TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  network TEXT NOT NULL DEFAULT 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 );
 CREATE INDEX IF NOT EXISTS payments_created ON payments (created_at);
+CREATE INDEX IF NOT EXISTS payments_network_created ON payments (network, created_at);
 CREATE INDEX IF NOT EXISTS payments_tx ON payments (tx);
 
 CREATE TABLE IF NOT EXISTS channels (

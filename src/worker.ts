@@ -4,12 +4,12 @@ import { x402Facilitator } from "@x402/core/facilitator";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { SupportedResponse } from "@x402/core/types";
 import type { Network } from "@x402/core/types";
-import { toFacilitatorSvmSigner } from "@x402/svm";
+import { createRpcClient, toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme as ExactFacilitator } from "@x402/svm/exact/facilitator";
 import { UptoSvmScheme as UptoFacilitator } from "@x402/svm/upto/facilitator";
 import { workersAi } from "./agent/ask.js";
 import { chainReader, createApp } from "./app.js";
-import { NETWORK } from "./catalog.js";
+import { MAINNET, NETWORK, USDC_MAINNET } from "./catalog.js";
 import { d1, type Db } from "./db.js";
 import { ingest } from "./data/ingest.js";
 import { ingestKenya } from "./data/kenya.js";
@@ -24,7 +24,9 @@ export type Env = {
   AUTHORIZER_KEY: string; // JSON byte array, signs upto claim vouchers
   DEMO_BUYER_KEY?: string; // JSON byte array, funded devnet wallet for the no-wallet demo
   TREASURY: string; // payTo address
-  RPC_URL: string;
+  RPC_URL: string; // Solana devnet
+  /** Solana mainnet. When set, every paid route also accepts real USDC on mainnet; same keys, same treasury. */
+  MAINNET_RPC_URL?: string;
   DATA_BASE_URL: string; // https://afriradar.com
   AI_MODEL?: string;
 };
@@ -32,19 +34,24 @@ export type Env = {
 const MONITOR_CRON = "41 * * * *"; // wrangler.toml [triggers]
 const signerFrom = (json: string) => createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(json)));
 
-type Built = { app: Awaited<ReturnType<typeof createApp>>; upto: UptoFacilitator; db: Db; demoSigner?: KeyPairSigner };
+type Built = { app: Awaited<ReturnType<typeof createApp>>; upto: UptoFacilitator; db: Db; demoSigner?: KeyPairSigner; networks: Network[] };
 let built: Promise<Built> | undefined;
 
 async function build(env: Env): Promise<Built> {
   const db = d1(env.DB);
   const [feePayer, authorizer]: KeyPairSigner[] = await Promise.all([signerFrom(env.FACILITATOR_KEY), signerFrom(env.AUTHORIZER_KEY)]);
-  const svm = toFacilitatorSvmSigner(feePayer, { defaultRpcUrl: env.RPC_URL });
+  const networks = [NETWORK, ...(env.MAINNET_RPC_URL ? [MAINNET] : [])] as Network[];
+  // One fee payer on both networks, each read and sent through its own RPC.
+  const svm = toFacilitatorSvmSigner(feePayer, {
+    [NETWORK]: createRpcClient(NETWORK as Network, env.RPC_URL),
+    ...(env.MAINNET_RPC_URL ? { [MAINNET]: createRpcClient(MAINNET as Network, env.MAINNET_RPC_URL) } : {}),
+  });
   const upto = new UptoFacilitator(svm, {
     channelStorage: new D1ChannelStorage(db),
     pendingSettlementStore: new D1PendingStore(db),
     maxChannelLifetimeSecs: 3600,
   });
-  const facilitator = new x402Facilitator().register(NETWORK as Network, new ExactFacilitator(svm)).register(NETWORK as Network, upto);
+  const facilitator = new x402Facilitator().register(networks, new ExactFacilitator(svm)).register(networks, upto);
   // In-process: the resource server calls the facilitator directly, no HTTP hop.
   const client: FacilitatorClient = {
     verify: (p, r) => facilitator.verify(p, r),
@@ -60,10 +67,11 @@ async function build(env: Env): Promise<Built> {
     authorizer,
     rpcUrl: env.RPC_URL,
     readChain: chainReader(jsonRpc(env.RPC_URL), env.TREASURY),
+    mainnet: env.MAINNET_RPC_URL ? { rpcUrl: env.MAINNET_RPC_URL, readChain: chainReader(jsonRpc(env.MAINNET_RPC_URL), env.TREASURY, USDC_MAINNET) } : undefined,
     demoSigner,
     feePayer,
   });
-  return { app, upto, db, demoSigner };
+  return { app, upto, db, demoSigner, networks };
 }
 
 const get = (env: Env) => (built ??= build(env).catch((e) => {
@@ -77,11 +85,17 @@ export default {
     return app.fetch(req, env, ctx);
   },
 
-  // Hourly: the end-to-end payment monitor. Daily: pull the latest SEC week and the Kenya history
-  // from AfriRadar, then close and reclaim abandoned payment channels.
+  // Hourly: the end-to-end payment monitor, and on mainnet the return of payment-channel rent, so the
+  // facilitator's SOL is never held for long. Daily: pull the latest SEC week and the Kenya history
+  // from AfriRadar, then close and reclaim abandoned devnet payment channels.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const { app, upto, db, demoSigner } = await get(env);
+    const { app, upto, db, demoSigner, networks } = await get(env);
+    const cleanup = (network: Network) =>
+      upto.createRentCleanupManager(network).cleanup()
+        .then(() => console.log("rent cleanup done", network))
+        .catch((e) => console.error("rent cleanup failed", network, e));
     if (event.cron === MONITOR_CRON) {
+      if (networks.includes(MAINNET as Network)) ctx.waitUntil(cleanup(MAINNET as Network));
       if (!demoSigner) return;
       const now = new Date(event.scheduledTime);
       ctx.waitUntil(
@@ -105,12 +119,7 @@ export default {
         } catch (e) {
           console.error("kenya ingest failed", e); // Nigeria above is already stored; Kenya retries tomorrow
         }
-        try {
-          await upto.createRentCleanupManager(NETWORK as Network).cleanup();
-          console.log("rent cleanup done");
-        } catch (e) {
-          console.error("rent cleanup failed", e);
-        }
+        await cleanup(NETWORK as Network);
       })(),
     );
   },

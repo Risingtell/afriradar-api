@@ -10,8 +10,9 @@ import type { Network, SupportedResponse } from "@x402/core/types";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme as ExactFacilitator } from "@x402/svm/exact/facilitator";
 import { InMemoryPaymentChannelStorage, UptoSvmScheme as UptoFacilitator } from "@x402/svm/upto/facilitator";
-import { createApp } from "../src/app.js";
-import { NETWORK, PRODUCTS } from "../src/catalog.js";
+import { createApp, MAINNET_ASKS_PER_HOUR } from "../src/app.js";
+import { MAINNET, NETWORK, PRODUCTS, USDC_DEVNET, USDC_MAINNET } from "../src/catalog.js";
+import { hourOf } from "../src/limits.js";
 import type { Db } from "../src/db.js";
 import { kindsAt, MONITOR, monitorStatus } from "../src/monitor.js";
 import { RECORDED_ATTACK } from "../src/proof.js";
@@ -23,12 +24,13 @@ let db: Db;
 let demo: KeyPairSigner;
 let app: Awaited<ReturnType<typeof createApp>>;
 
-async function build(withDemo = true) {
+async function build(withDemo = true, withMainnet = false) {
   const feePayer = await generateKeyPairSigner();
   const svm = toFacilitatorSvmSigner(feePayer, { defaultRpcUrl: RPC });
+  const networks = (withMainnet ? [NETWORK, MAINNET] : [NETWORK]) as Network[];
   const facilitator = new x402Facilitator()
-    .register(NETWORK as Network, new ExactFacilitator(svm))
-    .register(NETWORK as Network, new UptoFacilitator(svm, { channelStorage: new InMemoryPaymentChannelStorage() }));
+    .register(networks, new ExactFacilitator(svm))
+    .register(networks, new UptoFacilitator(svm, { channelStorage: new InMemoryPaymentChannelStorage() }));
   const client: FacilitatorClient = { verify: (p, r) => facilitator.verify(p, r), settle: (p, r) => facilitator.settle(p, r), getSupported: async () => facilitator.getSupported() as SupportedResponse };
   return createApp({
     db,
@@ -38,6 +40,7 @@ async function build(withDemo = true) {
     authorizer: await generateKeyPairSigner(),
     rpcUrl: RPC,
     readChain: async () => { throw new Error("no chain in these tests"); },
+    mainnet: withMainnet ? { rpcUrl: RPC, readChain: async () => { throw new Error("no chain in these tests"); } } : undefined,
     now: () => NOW,
     demoSigner: withDemo ? demo : undefined,
     feePayer: withDemo ? feePayer : undefined,
@@ -181,5 +184,78 @@ describe("RPC relay", () => {
   it("refuses anything that writes, and oversized batches", async () => {
     expect((await rpc({ jsonrpc: "2.0", id: 1, method: "sendTransaction", params: [] })).status).toBe(400);
     expect((await rpc(Array.from({ length: 26 }, (_, i) => ({ jsonrpc: "2.0", id: i, method: "getSlot" })))).status).toBe(400);
+  });
+});
+
+describe("mainnet", () => {
+  let main: Awaited<ReturnType<typeof createApp>>;
+  const get = async (path: string, init?: RequestInit) => {
+    const res = await main.fetch(new Request(`https://api.afriradar.com${path}`, init));
+    return { status: res.status, body: (await res.json().catch(() => null)) as Record<string, any>, res };
+  };
+  const required = (res: Response) => JSON.parse(Buffer.from(res.headers.get("PAYMENT-REQUIRED") as string, "base64").toString("utf8"));
+  const header = (network: string) => Buffer.from(JSON.stringify({ x402Version: 2, accepted: { network } })).toString("base64");
+  const ask = (question: string, network?: string) =>
+    get(PRODUCTS.ask.path, { method: "POST", headers: { "content-type": "application/json", ...(network ? { "PAYMENT-SIGNATURE": header(network) } : {}) }, body: JSON.stringify({ question }) });
+
+  beforeAll(async () => {
+    main = await build(true, true);
+    await db.run("INSERT INTO payments (id, tx, network, route, scheme, amount, payer, status, created_at) VALUES ('mn1', 'mn1', ?, '/v1/x', 'exact', '2000', 'VisitorD', 'settled', ?)", MAINNET, NOW.toISOString());
+  });
+
+  it("prices every paid route on devnet first, then mainnet, each in its own USDC", async () => {
+    for (const r of [await get(PRODUCTS.fund.example), await ask("What is the best fund?")]) {
+      expect(r.status).toBe(402);
+      const accepts = required(r.res).accepts as { network: string; asset: string; amount: string; payTo: string }[];
+      // Default x402 clients pay the first option they support, so "any Solana network" means devnet.
+      expect(accepts.map((a) => [a.network, a.asset])).toEqual([[NETWORK, USDC_DEVNET], [MAINNET, USDC_MAINNET]]);
+      expect(new Set(accepts.map((a) => `${a.amount} ${a.payTo}`)).size).toBe(1);
+    }
+  });
+
+  it("sells on devnet only without a mainnet RPC", async () => {
+    const { res } = await json(PRODUCTS.fund.example);
+    expect(required(res).accepts.map((a: { network: string }) => a.network)).toEqual([NETWORK]);
+    expect((await json("/rpc/mainnet", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(404);
+    expect((await json("/v1")).body.networks.map((n: { id: string }) => n.id)).toEqual(["devnet"]);
+  });
+
+  it("lists both networks in the catalog, the MCP challenge and the discovery listing", async () => {
+    expect((await get("/v1")).body.networks.map((n: { id: string; asset: { mint: string } }) => [n.id, n.asset.mint])).toEqual([["devnet", USDC_DEVNET], ["mainnet", USDC_MAINNET]]);
+    const tool = await get("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "afriradar_fund", arguments: { id: "money-market/aiico-money-market-fund" } } }) });
+    expect(tool.body.result.structuredContent.accepts.map((a: { network: string }) => a.network)).toEqual([NETWORK, MAINNET]);
+    const listing = await get("/discovery/resources");
+    expect(listing.body.items[0].accepts.map((a: { network: string }) => a.network)).toEqual([NETWORK, MAINNET]);
+  });
+
+  it("keeps the ledger's networks apart: devnet rows by default, mainnet on request, totals for each", async () => {
+    const dev = await get("/v1/payments");
+    expect(dev.body.recent.some((r: { tx: string }) => r.tx === "mn1")).toBe(false);
+    expect(dev.body.networks).toEqual({ devnet: { payments: 4, usdc: 0.011, payers: 3 }, mainnet: { payments: 1, usdc: 0.002, payers: 1 } });
+    const only = await get("/v1/payments?network=mainnet");
+    expect(only.body.recent).toHaveLength(1);
+    expect(only.body.recent[0]).toMatchObject({ tx: "mn1", network: MAINNET, chain: "mainnet", explorer: "https://explorer.solana.com/tx/mn1" });
+    expect((await get("/v1/payments?network=all")).body.recent.map((r: { tx: string }) => r.tx)).toEqual(expect.arrayContaining(["mn1", "v1"]));
+    expect((await get("/v1/payments?network=testnet")).status).toBe(400);
+  });
+
+  it("turns a paid question away before any deposit when the question is bad, and still prices an unpaid one", async () => {
+    const bad = await ask("", MAINNET);
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/not charged/);
+    expect((await ask("")).status).toBe(402);
+  });
+
+  it("caps mainnet questions per visitor, and not devnet ones", async () => {
+    await db.run("INSERT INTO kv (ns, k, v, updated_at) VALUES ('mainnet-ask', ?, ?, ?)", `ip:local:${hourOf(NOW)}`, String(MAINNET_ASKS_PER_HOUR), NOW.toISOString());
+    const capped = await ask("What is the best fund?", MAINNET);
+    expect(capped.status).toBe(429);
+    expect(capped.body.error).toMatch(/not charged/);
+    expect((await ask("What is the best fund?", NETWORK)).status).not.toBe(429);
+  });
+
+  it("relays reads to the mainnet RPC under the same allow-list", async () => {
+    const write = await get("/rpc/mainnet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sendTransaction", params: [] }) });
+    expect(write.status).toBe(400);
   });
 });

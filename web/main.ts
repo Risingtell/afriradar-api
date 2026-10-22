@@ -13,17 +13,27 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 const usdc = (micro: number) => `$${(micro / 1e6).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
 const short = (s: string) => (s.length > 14 ? `${s.slice(0, 6)}...${s.slice(-6)}` : s);
-const explorer = (tx: string) => `https://explorer.solana.com/tx/${tx}?cluster=devnet`;
-const USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
-type Catalog = { dataWeek: string; payTo: string; categories: { id: string; name: string }[]; products: { id: string; method: string; path: string; scheme: string; price: string; summary: string; example: string }[] };
-type LedgerRow = { tx: string | null; route: string; scheme: string; amount: string; usdc: number; payer: string | null; status: string; created_at: string; demo: boolean; monitor: boolean; explorer: string | null };
+// Devnet pays with free test USDC and is always on; mainnet pays real USDC and shows only when the API offers it.
+const NETS = {
+  devnet: { caip2: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", chain: "solana:devnet", mint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", relay: "/rpc", publicRpc: "https://api.devnet.solana.com", label: "Solana devnet" },
+  mainnet: { caip2: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", chain: "solana:mainnet", mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", relay: "/rpc/mainnet", publicRpc: "https://api.mainnet-beta.solana.com", label: "Solana mainnet" },
+} as const;
+type Net = keyof typeof NETS;
+const explorer = (tx: string, n: Net) => `https://explorer.solana.com/tx/${tx}${n === "mainnet" ? "" : "?cluster=devnet"}`;
+
+type Catalog = { dataWeek: string; payTo: string; networks?: { id: string }[]; categories: { id: string; name: string }[]; products: { id: string; method: string; path: string; scheme: string; price: string; summary: string; example: string }[] };
+type LedgerRow = { tx: string | null; chain: Net; route: string; scheme: string; amount: string; usdc: number; payer: string | null; status: string; created_at: string; demo: boolean; monitor: boolean; explorer: string | null };
 type Totals = { payments: number; usdc: number };
 
 let mode: "ask" | "buy" = "ask";
 let payWith: "demo" | "own" = "demo";
+let net: Net = "devnet";
 let own: { wallet: Wallet; signer: TransactionModifyingSigner; address: string } | null = null;
-const WALLET_HINT = $("wallet-line").innerHTML;
+const WALLET_HINT: Record<Net, string> = {
+  devnet: $("wallet-line").innerHTML,
+  mainnet: "Pays real USDC on Solana mainnet from your own Phantom, Solflare, Backpack or MetaMask. A data request costs $0.001 to $0.005; a question locks at most $0.05 and refunds what it does not use. You need no SOL: the facilitator pays the network fee.",
+};
 
 // ---------- small safe markdown: escape first, then bold and pipe tables ----------
 function renderAnswer(md: string): string {
@@ -51,6 +61,11 @@ function renderAnswer(md: string): string {
 // ---------- catalog, prices, categories ----------
 async function loadCatalog() {
   const c = (await (await fetch("/v1")).json()) as Catalog;
+  if (c.networks?.some((n) => n.id === "mainnet")) {
+    $("net-field").hidden = false;
+    $("recount-net-field").hidden = false;
+    $("net-tag").textContent = "Solana mainnet + devnet";
+  }
   $("price-grid").innerHTML = c.products
     .map((p) => `<div><span class="tag ${p.scheme === "upto" ? "tag--devnet" : "tag--live"}">${esc(p.scheme === "upto" ? "metered, capped" : "fixed price")}</span><span class="price">${esc(p.price)}${p.scheme === "upto" ? " max" : ""}</span><p class="route">${esc(p.method)} ${esc(p.path)}</p><p>${esc(p.summary)}</p></div>`)
     .join("");
@@ -70,16 +85,19 @@ async function loadCatalog() {
 // ---------- ledger ----------
 async function loadLedger() {
   try {
-    const l = (await (await fetch("/v1/payments?limit=25")).json()) as { settled: Totals & { payers: number }; visitors: Totals & { wallets: number }; monitor: { payments: number }; recent: LedgerRow[] };
+    const l = (await (await fetch("/v1/payments?limit=25&network=all")).json()) as { settled: Totals & { payers: number }; visitors: Totals & { wallets: number }; monitor: { payments: number }; networks?: Record<Net, Totals & { payers: number }>; recent: LedgerRow[] };
     $("st-payments").textContent = String(l.settled.payments);
-    $("ledger-totals").innerHTML = `<span><b>${l.settled.payments}</b> settled</span><span><b>${l.settled.usdc.toFixed(6)}</b> USDC</span><span><b>${l.visitors.payments}</b> paid from ${l.visitors.wallets} visitors' own wallets</span><span><b>${l.monitor.payments}</b> hourly checks</span>`;
+    const main = l.networks?.mainnet;
+    $("ledger-totals").innerHTML = `<span><b>${l.settled.payments}</b> settled</span><span><b>${l.settled.usdc.toFixed(6)}</b> USDC</span>${main?.payments ? `<span><b>${main.payments}</b> on mainnet, real USDC, from ${main.payers} wallets</span>` : ""}<span><b>${l.visitors.payments}</b> paid from ${l.visitors.wallets} visitors' own wallets</span><span><b>${l.monitor.payments}</b> hourly checks</span>`;
     $("ledger-rows").innerHTML = l.recent.length
       ? l.recent
-          .map((r) => `<tr><td>${esc(r.created_at.replace("T", " ").slice(0, 19))}</td><td class="st-${esc(r.status)}">${esc(r.status)}</td><td>${esc(r.scheme)}</td><td>${r.usdc}</td><td>${esc(r.route)}</td><td>${r.payer ? esc(short(r.payer)) : ""}${r.demo ? ' <span class="tag tag--off">demo</span>' : ""}${r.monitor ? ' <span class="tag tag--off">monitor</span>' : ""}</td><td>${r.explorer ? `<a href="${esc(r.explorer)}" target="_blank" rel="noopener">${esc(short(r.tx ?? ""))}</a>` : ""}</td></tr>`)
+          .map((r) => `<tr><td>${esc(r.created_at.replace("T", " ").slice(0, 19))}</td><td class="st-${esc(r.status)}">${esc(r.status)}</td><td>${esc(r.scheme)}</td><td>${r.usdc}</td><td>${esc(r.route)}</td><td>${r.payer ? esc(short(r.payer)) : ""}${r.demo ? ' <span class="tag tag--off">demo</span>' : ""}${r.monitor ? ' <span class="tag tag--off">monitor</span>' : ""}</td><td>${r.explorer ? `<a href="${esc(r.explorer)}" target="_blank" rel="noopener">${esc(short(r.tx ?? ""))}</a>` : ""}${r.chain === "mainnet" ? ' <span class="tag tag--live">mainnet</span>' : ""}</td></tr>`)
           .join("")
       : `<tr><td colspan="7">No payments yet. Make the first one above.</td></tr>`;
-    // The hero shows a real purchase when there is one, not the hourly self-check.
-    const last = l.recent.find((r) => r.status === "settled" && r.tx && !r.monitor) ?? l.recent.find((r) => r.status === "settled" && r.tx);
+    // The hero shows a real purchase when there is one, not the hourly self-check: real USDC first.
+    const real = (r: LedgerRow) => r.status === "settled" && !!r.tx && !r.monitor;
+    const mainRows = main?.payments ? ((await (await fetch("/v1/payments?limit=10&network=mainnet")).json()) as { recent: LedgerRow[] }).recent : [];
+    const last = mainRows.find(real) ?? l.recent.find(real) ?? l.recent.find((r) => r.status === "settled" && r.tx);
     if (last) {
       $("proof-amount").textContent = `${last.usdc} USDC`;
       $("proof-route").textContent = last.route;
@@ -87,7 +105,7 @@ async function loadLedger() {
       const a = $<HTMLAnchorElement>("proof-tx");
       a.textContent = short(last.tx as string);
       a.href = last.explorer as string;
-      $("proof-tag").textContent = "on chain";
+      $("proof-tag").textContent = last.chain === "mainnet" ? "mainnet" : "on chain";
     }
   } catch {
     $("proof-tag").textContent = "offline";
@@ -158,24 +176,25 @@ async function recount(all: boolean) {
   const bar = $("recount-bar");
   const out = $("recount-result");
   const relay = $<HTMLSelectElement>("recount-rpc").value === "relay";
-  const rpcUrl = relay ? `${location.origin}/rpc` : "https://api.devnet.solana.com";
+  const network = $<HTMLSelectElement>("recount-net").value as Net;
+  const rpcUrl = relay ? `${location.origin}${NETS[network].relay}` : NETS[network].publicRpc;
   const via = relay ? "our relay" : "Solana's public RPC";
   bar.style.width = "0";
-  out.textContent = `Reading Solana through ${via}...`;
+  out.textContent = `Reading ${NETS[network].label} through ${via}...`;
   const onProgress = (done: number, total: number) => {
     bar.style.width = `${Math.round((done / total) * 100)}%`;
     out.textContent = `Read ${done} of ${total} transactions through ${via}...`;
   };
   try {
     if (all) {
-      const r = await verify({ baseUrl: location.origin, rpcUrl, batchSize: relay ? 20 : 5, onProgress });
+      const r = await verify({ baseUrl: location.origin, network, rpcUrl, batchSize: relay ? 20 : 5, onProgress });
       out.innerHTML = r.ok
-        ? `<span class="ok-text">OK: all ${r.matched} settled payments in our ledger are on chain for the exact amount.</span> The treasury received ${r.chain.receipts} payments (${r.chain.usdc.toFixed(6)} USDC) in total; ${r.unlisted.length} are not in this ledger, from test runs against other deployments.`
+        ? `<span class="ok-text">OK: all ${r.matched} settled ${network} payments in our ledger are on chain for the exact amount.</span> The treasury received ${r.chain.receipts} payments (${r.chain.usdc.toFixed(6)} USDC) on ${NETS[network].label} in total; ${r.unlisted.length} are not in this ledger${network === "devnet" ? ", from test runs against other deployments" : ""}.`
         : `<span class="bad-text">${r.missing.length} ledger rows do not match the chain.</span> First: ${esc(short(r.missing[0].tx))}.`;
     } else {
-      const r = await verifyRecent({ baseUrl: location.origin, rpcUrl, count: 50, batchSize: relay ? 25 : 5, onProgress });
+      const r = await verifyRecent({ baseUrl: location.origin, network, rpcUrl, count: 50, batchSize: relay ? 25 : 5, onProgress });
       out.innerHTML = r.ok
-        ? `<span class="ok-text">OK: the latest ${r.checked} settled payments are on chain, each for exactly the amount listed.</span>`
+        ? `<span class="ok-text">OK: the latest ${r.checked} settled ${network} payments are on chain, each for exactly the amount listed.</span>`
         : `<span class="bad-text">${r.missing.length} of ${r.checked} do not match the chain.</span> First: ${esc(short(r.missing[0].tx))}.`;
     }
     bar.style.width = "100%";
@@ -212,7 +231,7 @@ function renderWallets() {
     $("disconnect").addEventListener("click", async () => {
       const w = own?.wallet;
       own = null;
-      $("wallet-line").innerHTML = WALLET_HINT;
+      $("wallet-line").innerHTML = WALLET_HINT[net];
       $("faucet-box").innerHTML = "";
       renderWallets();
       if (w) await disconnect(w).catch(() => undefined);
@@ -221,17 +240,19 @@ function renderWallets() {
     return;
   }
   const all = solanaWallets();
-  const ws = all.filter((w) => !signsMainnetOnly(w));
-  const mainnetOnly = all.filter(signsMainnetOnly).map((w) => esc(w.name)).join(", ");
+  const ws = all.filter((w) => net === "mainnet" || !signsMainnetOnly(w));
+  const mainnetOnly = net === "devnet" ? all.filter(signsMainnetOnly).map((w) => esc(w.name)).join(", ") : "";
   box.innerHTML = (ws.length
     ? ws.map((w, i) => `<button class="btn btn--ghost" type="button" data-w="${i}">Connect ${esc(w.name)}</button>`).join("")
-    : `<p class="wallet-line">No Solana wallet that can pay on devnet is turned on in this browser. Install or turn on Phantom, Solflare or Backpack, or use the demo wallet.</p>`)
-    + (mainnetOnly ? `<p class="wallet-line">${mainnetOnly} is not listed: it signs Solana payments on mainnet only, so it cannot pay here on devnet.</p>` : "");
+    : net === "devnet"
+      ? `<p class="wallet-line">No Solana wallet that can pay on devnet is turned on in this browser. Install or turn on Phantom, Solflare or Backpack, or use the demo wallet.</p>`
+      : `<p class="wallet-line">No Solana wallet is turned on in this browser. Install or turn on Phantom, Solflare, Backpack or MetaMask.</p>`)
+    + (mainnetOnly ? `<p class="wallet-line">${mainnetOnly} is not listed: it signs Solana payments on mainnet only, so it cannot pay here on devnet. Switch the network to mainnet to use it.</p>` : "");
   box.querySelectorAll<HTMLButtonElement>("button[data-w]").forEach((b) =>
     b.addEventListener("click", async () => {
       const w = ws[Number(b.dataset.w)];
       try {
-        const { signer, account } = await connect(w);
+        const { signer, account } = await connect(w, () => NETS[net].chain);
         own = { wallet: w, signer, address: account.address };
         renderWallets();
       } catch (e) {
@@ -242,13 +263,22 @@ function renderWallets() {
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const r = (await (await fetch("/rpc", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json()) as { result: T };
+  const r = (await (await fetch(NETS[net].relay, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json()) as { result: T };
   return r.result;
 }
 async function showBalance(addr: string) {
+  const n = net;
   try {
-    const r = await rpc<{ value: { account: { data: { parsed: { info: { tokenAmount: { uiAmount: number } } } } } }[] }>("getTokenAccountsByOwner", [addr, { mint: USDC_MINT }, { encoding: "jsonParsed" }]);
+    const r = await rpc<{ value: { account: { data: { parsed: { info: { tokenAmount: { uiAmount: number } } } } } }[] }>("getTokenAccountsByOwner", [addr, { mint: NETS[n].mint }, { encoding: "jsonParsed" }]);
+    if (n !== net) return; // the visitor switched network while this was loading
     const bal = r.value.reduce((a, t) => a + t.account.data.parsed.info.tokenAmount.uiAmount, 0);
+    if (n === "mainnet") {
+      $("wallet-line").innerHTML = bal > 0
+        ? `Mainnet USDC balance: ${bal}. This pays real USDC. You need no SOL: the facilitator pays the network fee.`
+        : `This wallet holds no USDC on Solana mainnet (address ${esc(addr)}). Add a little: $0.10 covers about 20 data requests.`;
+      $("faucet-box").innerHTML = "";
+      return;
+    }
     $("wallet-line").innerHTML = bal > 0
       ? `Devnet USDC balance: ${bal}. You need no SOL: the facilitator pays the network fee.`
       : `This wallet has no devnet USDC. Get some free at <a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> (Solana Devnet, address ${esc(addr)}), or from us below.`;
@@ -307,7 +337,7 @@ function requestFor(): { product: string; path: string; init?: RequestInit; para
 
 type Settled = { success?: boolean; transaction?: string; amount?: string; payer?: string; errorReason?: string };
 
-function renderResult(data: unknown, receipt: Settled | null, payer: string, agreed?: number) {
+function renderResult(data: unknown, receipt: Settled | null, payer: string, n: Net, agreed?: number) {
   const d = data as { answer?: string; bill?: { base: number; data: { tool: string; price: number }[]; tokens: { prompt: number; completion: number; price: number }; total: number; ceiling: number }; week?: string; error?: string };
   let html = "";
   if (d?.answer && d.bill) {
@@ -321,7 +351,7 @@ function renderResult(data: unknown, receipt: Settled | null, payer: string, agr
   }
   if (receipt?.transaction) {
     const amount = receipt.amount !== undefined ? Number(receipt.amount) : agreed;
-    html += `<div class="receipt">Settled on Solana devnet${amount !== undefined ? `: ${usdc(amount)} USDC` : ""}<br>payer ${esc(payer)}<br>tx <a href="${esc(explorer(receipt.transaction))}" target="_blank" rel="noopener">${esc(receipt.transaction)}</a></div>`;
+    html += `<div class="receipt">Settled on ${NETS[n].label}${amount !== undefined ? `: ${usdc(amount)} ${n === "mainnet" ? "real " : ""}USDC` : ""}<br>payer ${esc(payer)}<br>tx <a href="${esc(explorer(receipt.transaction, n))}" target="_blank" rel="noopener">${esc(receipt.transaction)}</a></div>`;
   } else if (receipt) {
     html += `<div class="receipt bad">Not charged: ${esc(receipt.errorReason ?? "request failed")}</div>`;
   }
@@ -332,9 +362,10 @@ async function run() {
   const btn = $<HTMLButtonElement>("run");
   const req = requestFor();
   if (req.product === "ask" && (req.question ?? "").length < 3) return status("Type a question first.", "bad");
+  const n = net;
   btn.disabled = true;
-  status(payWith === "demo" ? "Paying with the demo wallet and waiting for Solana..." : "Waiting for your wallet to sign...");
-  $("result").innerHTML = `<p class="muted">${esc(req.product === "ask" ? "The analyst is buying data and writing. This takes about 10 to 25 seconds." : "Settling on Solana devnet.")}</p>`;
+  status(payWith === "demo" ? "Paying with the demo wallet and waiting for Solana..." : `Waiting for your wallet to sign${n === "mainnet" ? " a real USDC payment" : ""}...`);
+  $("result").innerHTML = `<p class="muted">${esc(req.product === "ask" ? "The analyst is buying data and writing. This takes about 10 to 25 seconds." : `Settling on ${NETS[n].label}.`)}</p>`;
   try {
     if (payWith === "demo") {
       const res = await fetch("/demo/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ product: req.product, question: req.question, params: req.params }) });
@@ -344,13 +375,15 @@ async function run() {
         $("result").innerHTML = `<p class="answer">${esc(body.error ?? "")}</p>`;
         return;
       }
-      renderResult(body.data, body.receipt ?? null, body.payer ?? "demo wallet", agreedPrice(req.product));
+      renderResult(body.data, body.receipt ?? null, body.payer ?? "demo wallet", "devnet", agreedPrice(req.product));
       status(body.receipt?.success ? "Paid and delivered." : "Not charged.", body.receipt?.success ? "ok" : "bad");
     } else {
       if (!own) return status("Connect a wallet first, or switch to the demo wallet.", "bad");
+      // Registered for the chosen network only, so a wallet never pays on the other one.
+      const rpcUrl = `${location.origin}${NETS[n].relay}`;
       const client = new x402Client()
-        .register("solana:*", new ExactSvmScheme(own.signer, { rpcUrl: `${location.origin}/rpc` }))
-        .register("solana:*", new UptoSvmScheme(own.signer, { rpcUrl: `${location.origin}/rpc` }))
+        .register(NETS[n].caip2 as `${string}:${string}`, new ExactSvmScheme(own.signer, { rpcUrl }))
+        .register(NETS[n].caip2 as `${string}:${string}`, new UptoSvmScheme(own.signer, { rpcUrl }))
         .setSpendControls({ maxAmountPerPayment: "$0.05" });
       let agreed: number | undefined;
       client.onAfterPaymentCreation(async ({ selectedRequirements }) => {
@@ -361,7 +394,7 @@ async function run() {
       const header = res.headers.get("PAYMENT-RESPONSE");
       const receipt = header ? (decodePaymentResponseHeader(header) as Settled) : null;
       const data = await res.json().catch(() => null);
-      renderResult(data, receipt, own.address, receipt?.amount ? undefined : agreed);
+      renderResult(data, receipt, own.address, n, receipt?.amount ? undefined : agreed);
       status(res.ok && receipt?.success ? "Paid from your wallet and delivered." : `Not charged (${res.status}).`, res.ok ? "ok" : "bad");
       void showBalance(own.address);
     }
@@ -373,7 +406,7 @@ async function run() {
   }
 }
 
-const PRICES: Record<string, number> = { top: 2000, category: 2000, fund: 1000, history: 5000, compare: 3000 };
+const PRICES: Record<string, number> = { top: 2000, category: 2000, fund: 1000, history: 5000, compare: 3000, kenya: 2000, kenyaScheme: 1000 };
 const agreedPrice = (p: string) => PRICES[p];
 
 let searchTimer: number | undefined;
@@ -390,6 +423,29 @@ $("mode-ask").addEventListener("click", () => { mode = "ask"; setPressed("mode-a
 $("mode-buy").addEventListener("click", () => { mode = "buy"; setPressed("mode-ask", "mode-buy", false); $("ask-fields").hidden = true; $("buy-fields").hidden = false; updateProductFields(); });
 $("pay-demo").addEventListener("click", () => { payWith = "demo"; setPressed("pay-demo", "pay-own", true); $("own-wallet").hidden = true; $("demo-line").hidden = false; });
 $("pay-own").addEventListener("click", () => { payWith = "own"; setPressed("pay-demo", "pay-own", false); $("own-wallet").hidden = false; $("demo-line").hidden = true; renderWallets(); });
+// Mainnet has no demo wallet: real USDC comes only from the visitor's own wallet.
+function setNet(n: Net) {
+  if (n === net) return;
+  net = n;
+  setPressed("net-devnet", "net-mainnet", n === "devnet");
+  $("pay-demo").hidden = n === "mainnet";
+  if (n === "mainnet") {
+    payWith = "own";
+    setPressed("pay-demo", "pay-own", false);
+    $("own-wallet").hidden = false;
+    $("demo-line").hidden = true;
+  }
+  // A wallet that signs on mainnet only cannot stay connected for devnet.
+  if (own && n === "devnet" && signsMainnetOnly(own.wallet)) {
+    void disconnect(own.wallet).catch(() => undefined);
+    own = null;
+  }
+  $("faucet-box").innerHTML = "";
+  if (!own) $("wallet-line").innerHTML = WALLET_HINT[n];
+  if (payWith === "own") renderWallets();
+}
+$("net-devnet").addEventListener("click", () => setNet("devnet"));
+$("net-mainnet").addEventListener("click", () => setNet("mainnet"));
 $("product").addEventListener("change", updateProductFields);
 $("presets").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { $<HTMLTextAreaElement>("question").value = b.textContent ?? ""; }));
 $("run").addEventListener("click", () => void run());

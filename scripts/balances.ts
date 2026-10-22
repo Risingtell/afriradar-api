@@ -1,4 +1,7 @@
-// Prints SOL and devnet USDC balances for every project wallet, and opens the treasury's USDC account if missing.
+// Prints SOL and USDC balances for every project wallet, and with --setup opens the treasury's USDC
+// account if missing (the facilitator pays the rent). Devnet by default; --mainnet reads and writes
+// Solana mainnet through MAINNET_RPC_URL.
+//   set -a; . ./.env; set +a; npx tsx scripts/balances.ts [--mainnet] [--setup]
 import { readFileSync } from "node:fs";
 import {
   address,
@@ -16,9 +19,12 @@ import {
   signTransactionMessageWithSigners,
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS, findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
+import { USDC_DEVNET, USDC_MAINNET } from "../src/catalog.js";
 
-const RPC = process.env.SVM_RPC_URL ?? "https://api.devnet.solana.com";
-const USDC = address("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+const MAINNET = process.argv.includes("--mainnet");
+const RPC = MAINNET ? process.env.MAINNET_RPC_URL ?? "https://api.mainnet-beta.solana.com" : process.env.SVM_RPC_URL ?? "https://api.devnet.solana.com";
+const USDC = address(MAINNET ? USDC_MAINNET : USDC_DEVNET);
+console.log(`Solana ${MAINNET ? "mainnet" : "devnet"}, USDC ${USDC}`);
 const rpc = createSolanaRpc(RPC);
 const key = (role: string) =>
   createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(readFileSync(`keys/${role}.json`, "utf8"))));

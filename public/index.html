@@ -30,7 +30,7 @@
       <a href="#ledger">Ledger</a>
       <a href="#build">Build</a>
       <a href="https://github.com/Risingtell/afriradar-api">GitHub</a>
-      <span class="tag tag--devnet">Solana devnet</span>
+      <span class="tag tag--devnet" id="net-tag">Solana devnet</span>
     </nav>
   </div>
 </header>
@@ -115,6 +115,14 @@
               <label for="fund">Fund (search is free)</label>
               <input id="fund" list="fund-list" value="money-market/aiico-money-market-fund" autocomplete="off">
               <datalist id="fund-list"></datalist>
+            </div>
+          </div>
+
+          <div class="field" id="net-field" hidden>
+            <label>Network</label>
+            <div class="seg" role="group" aria-label="Network">
+              <button type="button" id="net-devnet" aria-pressed="true">Devnet, test USDC</button>
+              <button type="button" id="net-mainnet" aria-pressed="false">Mainnet, real USDC</button>
             </div>
           </div>
 
@@ -226,6 +234,13 @@
         <div>
           <h3 class="h-m">Check this ledger against Solana</h3>
           <p class="small">Your browser reads the payments straight from Solana and compares each amount with this ledger. Nothing here trusts our database.</p>
+          <div id="recount-net-field" hidden>
+            <label for="recount-net">Network</label>
+            <select id="recount-net">
+              <option value="devnet">Devnet</option>
+              <option value="mainnet">Mainnet</option>
+            </select>
+          </div>
           <label for="recount-rpc">Read Solana through</label>
           <select id="recount-rpc">
             <option value="relay">Our read-only relay (fast)</option>

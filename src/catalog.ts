@@ -1,9 +1,20 @@
 // The one list of what AfriRadar sells, at what price. The x402 route config, the free /v1 catalog,
 // the docs and the agent's tool prices are all generated from this, so they cannot disagree.
 
-export const NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana devnet
+export const NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana devnet, the default
+export const MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" as const; // Solana mainnet, real USDC
 export const USDC_DEVNET = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+export const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 export const USDC_DECIMALS = 6;
+
+/** Both networks, devnet first: a buyer that accepts any Solana network pays with free test USDC. */
+export const CHAINS = {
+  devnet: { id: "devnet", network: NETWORK, usdc: USDC_DEVNET, label: "Solana devnet", money: "free test USDC" },
+  mainnet: { id: "mainnet", network: MAINNET, usdc: USDC_MAINNET, label: "Solana mainnet", money: "real USDC" },
+} as const;
+export type ChainId = keyof typeof CHAINS;
+export const chainOf = (network: string | null | undefined) => (network === MAINNET ? CHAINS.mainnet : CHAINS.devnet);
+export const explorerUrl = (sig: string, network?: string | null) => `https://explorer.solana.com/tx/${sig}${network === MAINNET ? "" : "?cluster=devnet"}`;
 
 /** USDC amounts are handled as integer micro-USDC (6 decimals) everywhere. */
 export const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// afriradar: buy African fund data (SEC Nigeria, CMA Kenya) from the terminal, paid in USDC on Solana devnet.
+// afriradar: buy African fund data (SEC Nigeria, CMA Kenya) from the terminal, paid in USDC on Solana (devnet, or mainnet with --mainnet).
 import { createSolanaRpc, address } from "@solana/kit";
-import { createAfriRadar, AfriRadarError, DEFAULT_BASE_URL, DEVNET_RPC, type Category, type RankBy } from "./client.js";
-import { verify, USDC_DEVNET } from "./verify.js";
+import { createAfriRadar, AfriRadarError, DEFAULT_BASE_URL, DEVNET_RPC, MAINNET_RPC, type Category, type RankBy } from "./client.js";
+import { verify, USDC_DEVNET, USDC_MAINNET } from "./verify.js";
 import { createWallet, DEFAULT_WALLET, loadSigner } from "./wallet.js";
 
-const HELP = `afriradar: African fund data (SEC Nigeria weekly, CMA Kenya quarterly), paid per request in USDC on Solana (devnet)
+const HELP = `afriradar: African fund data (SEC Nigeria weekly, CMA Kenya quarterly), paid per request in USDC on Solana
 
 Free
   afriradar catalog                     products, prices, payee, data week
@@ -27,9 +27,13 @@ Wallet
   afriradar wallet [--new]              show (or create) ${DEFAULT_WALLET}
   afriradar mcp                         run as an MCP server (tools for AI agents)
 
+Network  devnet with free test USDC by default; add --mainnet to pay, check balances and verify with real USDC
 Options  --json  --api <url>  --rpc <url>  --max <usdc per request>  --budget <usdc>
 Env      AFRIRADAR_KEY (base58 or JSON secret) overrides the wallet file
 Categories: money-market bond dollar equity balanced shariah reit ethical specialised`;
+
+// Switches never take a value, so `--mainnet fund x` keeps "fund" as the command.
+const SWITCHES = new Set(["json", "new", "help", "mainnet"]);
 
 function parseArgs(argv: string[]) {
   const pos: string[] = [];
@@ -38,7 +42,7 @@ function parseArgs(argv: string[]) {
     const a = argv[i];
     if (a.startsWith("--")) {
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
+      if (!SWITCHES.has(a.slice(2)) && next !== undefined && !next.startsWith("--")) {
         flags[a.slice(2)] = next;
         i++;
       } else flags[a.slice(2)] = true;
@@ -55,7 +59,8 @@ async function main() {
   const [cmd, ...rest] = pos;
   const json = flags.json === true;
   const baseUrl = typeof flags.api === "string" ? flags.api : process.env.AFRIRADAR_API ?? DEFAULT_BASE_URL;
-  const rpcUrl = typeof flags.rpc === "string" ? flags.rpc : process.env.AFRIRADAR_RPC ?? DEVNET_RPC;
+  const network = flags.mainnet === true ? "mainnet" : "devnet";
+  const rpcUrl = typeof flags.rpc === "string" ? flags.rpc : process.env.AFRIRADAR_RPC ?? (network === "mainnet" ? MAINNET_RPC : DEVNET_RPC);
   const out = (human: string, data: unknown) => console.log(json ? JSON.stringify(data, null, 2) : human);
 
   if (!cmd || cmd === "help" || flags.help) return console.log(HELP);
@@ -64,19 +69,20 @@ async function main() {
     const signer = flags.new ? await createWallet() : await loadSigner();
     const rpc = createSolanaRpc(rpcUrl);
     const sol = Number((await rpc.getBalance(signer.address).send()).value) / 1e9;
-    const toks = await rpc.getTokenAccountsByOwner(signer.address, { mint: address(USDC_DEVNET) }, { encoding: "jsonParsed" }).send();
+    const toks = await rpc.getTokenAccountsByOwner(signer.address, { mint: address(network === "mainnet" ? USDC_MAINNET : USDC_DEVNET) }, { encoding: "jsonParsed" }).send();
     const usdc = toks.value.reduce((a, t) => a + Number((t.account.data as { parsed: { info: { tokenAmount: { uiAmount: number } } } }).parsed.info.tokenAmount.uiAmount), 0);
     return out(
-      `address ${signer.address}\nSOL     ${sol}\nUSDC    ${usdc}\n${usdc === 0 ? "Get free devnet USDC at https://faucet.circle.com (choose Solana Devnet). You need no SOL: the server pays network fees." : ""}`,
-      { address: signer.address, sol, usdc },
+      `network ${network}\naddress ${signer.address}\nSOL     ${sol}\nUSDC    ${usdc}\n${usdc === 0 && network === "devnet" ? "Get free devnet USDC at https://faucet.circle.com (choose Solana Devnet). You need no SOL: the server pays network fees." : ""}`,
+      { network, address: signer.address, sol, usdc },
     );
   }
 
   if (cmd === "verify") {
-    const r = await verify({ baseUrl, rpcUrl });
+    const r = await verify({ baseUrl, rpcUrl, network });
     out(
       [
-        `treasury        ${r.treasury} (USDC account ${r.tokenAccount})`,
+        `network         Solana ${r.network}`,
+        `treasury       ${r.treasury} (USDC account ${r.tokenAccount})`,
         `on chain        ${r.chain.receipts} payments, ${r.chain.usdc} USDC`,
         `API ledger      ${r.ledger.settled} settled, ${r.ledger.usdc} USDC`,
         `matched         ${r.matched} of ${r.ledger.settled} ledger rows found on chain for the exact amount`,
@@ -91,12 +97,13 @@ async function main() {
 
   if (cmd === "mcp") {
     const { runMcp } = await import("./mcp.js");
-    return runMcp({ baseUrl, rpcUrl });
+    return runMcp({ baseUrl, rpcUrl, network });
   }
 
   const api = createAfriRadar({
     signer: ["catalog", "search", "overview"].includes(cmd) ? undefined : await loadSigner(),
     baseUrl,
+    network,
     rpcUrl,
     maxPerRequest: typeof flags.max === "string" ? Number(flags.max) : undefined,
     budget: typeof flags.budget === "string" ? Number(flags.budget) : undefined,
