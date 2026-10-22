@@ -1,6 +1,6 @@
 # AfriRadar Data API
 
-African investment fund data, sold one request at a time over [x402](https://x402.org) on Solana. A wallet pays a fraction of a cent in USDC and gets the data back with the Solana transaction that paid for it. There is no account, no API key and no subscription. An AI analyst answers plain-English questions and charges only for the data it reads, inside a spending cap the buyer sets on chain.
+African investment fund data, sold one request at a time over [x402](https://x402.org) on Solana. **Live on Solana mainnet for real USDC**, and on devnet with free test USDC for anyone who wants to try it without spending. A wallet pays a fraction of a cent in USDC and gets the data back with the Solana transaction that paid for it. There is no account, no API key and no subscription. An AI analyst answers plain-English questions and charges only for the data it reads, inside a spending cap the buyer sets on chain.
 
 The data comes from the regulators:
 
@@ -10,6 +10,7 @@ The data comes from the regulators:
 Both are read, checked and published by [afriradar.com](https://afriradar.com). This API sells them per request.
 
 [![payments settled](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fpayments&query=%24.settled.payments&label=payments%20settled%20on%20Solana&color=1dbf8b)](https://api.afriradar.com/#ledger)
+[![mainnet payments](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fpayments&query=%24.networks.mainnet.payments&label=real-USDC%20payments%20on%20mainnet&color=1dbf8b)](https://api.afriradar.com/v1/payments?network=mainnet)
 [![visitor wallets](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fpayments&query=%24.visitors.wallets&label=visitor%20wallets%20that%20paid&color=1dbf8b)](https://api.afriradar.com/v1/payments)
 [![hourly checks passed](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.afriradar.com%2Fv1%2Fstatus&query=%24.last7d.passed&label=hourly%20payment%20checks%20passed%20(7d)&color=1dbf8b)](https://api.afriradar.com/v1/status)
 [![CI](https://github.com/Risingtell/afriradar-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Risingtell/afriradar-api/actions/workflows/ci.yml)
@@ -26,7 +27,8 @@ Both are read, checked and published by [afriradar.com](https://afriradar.com). 
 | Hourly end-to-end payment check | https://api.afriradar.com/v1/status |
 | Hosted MCP server, paid tools over x402 | `https://api.afriradar.com/mcp` |
 | For language models and agents | [/llms.txt](https://api.afriradar.com/llms.txt), [/discovery/resources](https://api.afriradar.com/discovery/resources) |
-| Network | Solana **devnet**, USDC mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+| Networks | Solana **mainnet**, real USDC (mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`); Solana devnet, test USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). Every 402 offers both. |
+| First real-USDC payments on mainnet | data [3m6KcD...](https://explorer.solana.com/tx/3m6KcDXypfBW9TWsjzJTi2EFYHuWZSZzi2MWejF6ZdcNJjVTZCF7bUETnSeeuRg746wb2tbpN9VbVpdFKqopfX6D); analyst deposit [SoC3i4...](https://explorer.solana.com/tx/SoC3i4vuaTZuNczNEW6o5H1NWBgWiDiBKK2AE4SWPFwK12MT3VRZQg92BwJn1EMeDGyV7nPdtUr9eYnRm3eHPXS) and settlement [5XmChR...](https://explorer.solana.com/tx/5XmChRiNPYeeAM4tudd2DRFfFKEUXBrnzt5gW28DLdBHqc3rADkipJrpBvKBpzEvrpknjXaVmiKP4tYtxp6PEr72) |
 
 ## Judging criteria, mapped
 
@@ -34,7 +36,7 @@ Best Use of x402 on Solana. Each claim links to something you can check.
 
 | Criterion | What is built | Check it |
 |---|---|---|
-| Meaningful integration of x402 and Solana | Both x402 schemes on Solana: `exact` for fixed-price data, `upto` on the Solana Foundation payment-channel program for the metered analyst. Our own facilitator runs in the Worker and pays every network fee. x402 also runs inside MCP (`@x402/mcp`), and every paid route declares x402 Bazaar discovery metadata. | Visitor `exact` payment [61YK61...](https://explorer.solana.com/tx/61YK61tHb5VoxX9bBZEzDjQqVerCSAsYrk4iBRQagLY7y8xeEzchczrSkdNsHcUx4mibvCdVniVTYCMwnXbq13xD?cluster=devnet); visitor `upto` deposit [5Vu8mr...](https://explorer.solana.com/tx/5Vu8mrpyFQ7pYtwMn2wabdj4bJsZWSAm1Rv77ypBFVpo7vz47pfkMGi7Qbin41cYUKj5C8WguNGY2VMJotKc7cJY?cluster=devnet) and settlement of 0.00613 with the rest refunded [5mwM8r...](https://explorer.solana.com/tx/5mwM8rYYaBMjRHi14tSTeDuthvPSWhV6uz74QzbGKmSSRgY9ZkGThHBTHE3e7ATYj1MpgQ4tbyX5yfHQBR9vTv1p?cluster=devnet); paid MCP tool call [3JTxW7...](https://explorer.solana.com/tx/3JTxW71bRBWVb6BNDDHQpvfXddChS42PBHj2eohNYnyTfAVQD6STmzRqbYo9wxUtb4egoqy7W4WPMUBGkpfDUTZg?cluster=devnet) |
+| Meaningful integration of x402 and Solana | Both x402 schemes on Solana mainnet and devnet: `exact` for fixed-price data, `upto` on the Solana Foundation payment-channel program for the metered analyst. Our own facilitator runs in the Worker and pays every network fee on both networks. x402 also runs inside MCP (`@x402/mcp`), and every paid route declares x402 Bazaar discovery metadata. | Mainnet, real USDC: `exact` payment [3m6KcD...](https://explorer.solana.com/tx/3m6KcDXypfBW9TWsjzJTi2EFYHuWZSZzi2MWejF6ZdcNJjVTZCF7bUETnSeeuRg746wb2tbpN9VbVpdFKqopfX6D); `upto` deposit of $0.05 [SoC3i4...](https://explorer.solana.com/tx/SoC3i4vuaTZuNczNEW6o5H1NWBgWiDiBKK2AE4SWPFwK12MT3VRZQg92BwJn1EMeDGyV7nPdtUr9eYnRm3eHPXS) and settlement of 0.004328 with the rest refunded [5XmChR...](https://explorer.solana.com/tx/5XmChRiNPYeeAM4tudd2DRFfFKEUXBrnzt5gW28DLdBHqc3rADkipJrpBvKBpzEvrpknjXaVmiKP4tYtxp6PEr72). Devnet: visitor `exact` payment [61YK61...](https://explorer.solana.com/tx/61YK61tHb5VoxX9bBZEzDjQqVerCSAsYrk4iBRQagLY7y8xeEzchczrSkdNsHcUx4mibvCdVniVTYCMwnXbq13xD?cluster=devnet); visitor `upto` deposit [5Vu8mr...](https://explorer.solana.com/tx/5Vu8mrpyFQ7pYtwMn2wabdj4bJsZWSAm1Rv77ypBFVpo7vz47pfkMGi7Qbin41cYUKj5C8WguNGY2VMJotKc7cJY?cluster=devnet) and settlement of 0.00613 with the rest refunded [5mwM8r...](https://explorer.solana.com/tx/5mwM8rYYaBMjRHi14tSTeDuthvPSWhV6uz74QzbGKmSSRgY9ZkGThHBTHE3e7ATYj1MpgQ4tbyX5yfHQBR9vTv1p?cluster=devnet); paid MCP tool call [3JTxW7...](https://explorer.solana.com/tx/3JTxW71bRBWVb6BNDDHQpvfXddChS42PBHj2eohNYnyTfAVQD6STmzRqbYo9wxUtb4egoqy7W4WPMUBGkpfDUTZg?cluster=devnet) |
 | Reliability of the payment-to-access flow | Payment settles before data leaves; a failed handler cancels the payment; a late confirmation is checked on chain before refusing; wallets that add safety instructions while signing are accepted. An hourly monitor pays through the real flow and publishes the result. | [/v1/status](https://api.afriradar.com/v1/status); recount the ledger from the chain on the [demo page](https://api.afriradar.com/#ledger) or with `npx afriradar verify` |
 | A compelling use case beyond a basic demo | Real regulator data from two countries (SEC Nigeria weekly, CMA Kenya quarterly), an AI analyst that buys only the data it needs inside a cap Solana enforces, and tools for agents (npm SDK, CLI, local and hosted MCP). Outside users have paid from their own wallets. | [Try to overcharge a buyer](https://api.afriradar.com/#proof); visitor payments in the [ledger](https://api.afriradar.com/v1/payments) (`visitors`) |
 | Clear documentation and sensible handling of failed payments | This README, [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md), [/llms.txt](https://api.afriradar.com/llms.txt). An error is never charged; a failed answer refunds the whole deposit; a failed payment keeps the facilitator's reason in the public ledger. | A question that failed, refunded in full: deposit [5VPjyF...](https://explorer.solana.com/tx/5VPjyFCiVGQzyxBg4p3S3VH4dYLXc4Wy44yD9ehpDZ3ViNcRVLn2T5kMKsvJheAMDnDsMMs7Wp6NYDxRuY6cprMx?cluster=devnet), refund [TUuMwW...](https://explorer.solana.com/tx/TUuMwWGUeErAfuajz7KXVGj562k1tEwtudX9kmqkza7iVtQS5wHj4xfV6M4Y2cBGZ3KmRcbse99XgjxMjQAyzfy?cluster=devnet); [When a payment fails](#when-a-payment-fails) |
@@ -43,13 +45,13 @@ Best Use of x402 on Solana. Each claim links to something you can check.
 
 ```
 GET /v1/kenya/unit-trusts
-<- 402 Payment Required, PAYMENT-REQUIRED header: pay 0.002 USDC to CEunt52v... on solana:devnet
+<- 402 Payment Required, PAYMENT-REQUIRED header: pay 0.002 USDC to CEunt52v... on Solana mainnet or devnet
 -> same request, PAYMENT-SIGNATURE header: a USDC transfer signed by the buyer
    the API's facilitator verifies it, settles it on Solana and runs the handler
 <- 200 with the data, PAYMENT-RESPONSE header: { success, transaction, payer }
 ```
 
-The facilitator runs inside the same Cloudflare Worker as the API and pays the network fee, so a buyer needs devnet USDC and no SOL.
+The facilitator runs inside the same Cloudflare Worker as the API and pays the network fee, so a buyer needs USDC (real on mainnet, test on devnet) and no SOL.
 
 ## Products
 
@@ -108,6 +110,15 @@ To show the amount is the only reason for the failure, the script also simulates
 
 Every paid HTTP route declares x402 Bazaar discovery metadata, so its 402 tells an agent how to call it (path parameters, query, body). [`/discovery/resources`](https://api.afriradar.com/discovery/resources) lists every route and MCP tool in the Bazaar format, and [`/llms.txt`](https://api.afriradar.com/llms.txt) describes the API for language models. See [`src/mcp.ts`](src/mcp.ts) and [`src/discovery.ts`](src/discovery.ts).
 
+## Mainnet and devnet side by side
+
+The same Worker sells on both networks. Every 402 lists devnet first and mainnet second, so an x402 client picks the network its wallet is on. Each payment is stored with its network, and the ledger reads `?network=devnet|mainnet|all` (devnet by default).
+
+- **Real money stays deliberate.** The demo wallet and the hourly monitor pay on devnet only. On mainnet you always pay from your own wallet.
+- **One facilitator, two chains.** The facilitator pays network fees on both; it reaches mainnet through its own RPC, and the page signs through `/rpc/mainnet`.
+- **Guard before payment.** A question is validated before its deposit is taken, and mainnet questions are limited per visitor per hour, so a bad request is refused without charge.
+- **Recount it.** On the [demo page](https://api.afriradar.com/#ledger), choose **Mainnet** next to the recount buttons: your browser reads every mainnet payment from Solana and compares it with the ledger.
+
 ## Reliability, measured every hour
 
 A cron runs at 41 minutes past every hour: the demo wallet buys one fund through the normal x402 flow, and every six hours it also asks the analyst a question. A check passes only if the payment settled on Solana and the data or answer came back. Results are at [`/v1/status`](https://api.afriradar.com/v1/status) and on the demo page. The monitor's payments are real settlements, so they stay in the public ledger, labelled `monitor` and counted apart from visitors. See [`src/monitor.ts`](src/monitor.ts).
@@ -129,7 +140,7 @@ OK: every payment the API claims is on chain.
 
 ## Try it
 
-**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. MetaMask is not offered: its Solana wallet signs on mainnet only.
+**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. To pay real USDC, set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). You still need no SOL.
 
 **From a terminal** (Node 22 or later), with the [`afriradar`](https://www.npmjs.com/package/afriradar) package on npm:
 
@@ -153,7 +164,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 74 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
+npm test                 # 82 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
 npm run typecheck
 ```
 

@@ -1,13 +1,13 @@
 # AfriRadar Data API
 
-> African investment fund data from the regulators, sold one request at a time over x402 on Solana. Every fund in SEC Nigeria's weekly valuation report (weekly since January 2025) and every unit trust scheme in CMA Kenya's quarterly statistical bulletin (quarterly since December 2023). Pay a fraction of a cent in USDC per request: no account, no API key. Network: Solana devnet, USDC mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU. Data, not investment advice.
+> African investment fund data from the regulators, sold one request at a time over x402 on Solana. Every fund in SEC Nigeria's weekly valuation report (weekly since January 2025) and every unit trust scheme in CMA Kenya's quarterly statistical bulletin (quarterly since December 2023). Pay a fraction of a cent in USDC per request: no account, no API key. Networks: Solana mainnet, real USDC (mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v), and Solana devnet, test USDC (mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU). Every 402 offers both. Data, not investment advice.
 
 ## How to pay
 
 - Call any paid endpoint. It answers 402 Payment Required with a PAYMENT-REQUIRED header (base64 JSON): price, USDC mint, payee and the x402 scheme.
 - Fixed-price data uses x402 `exact`: sign one USDC transfer and repeat the request with a PAYMENT-SIGNATURE header. The data comes back with the Solana transaction in PAYMENT-RESPONSE.
 - The analyst (POST /v1/ask) uses x402 `upto`: deposit a $0.05 ceiling into a Solana Foundation payment channel; you are charged only the itemized bill and the rest is refunded in the same transaction.
-- AfriRadar runs its own facilitator and pays the network fee, so a buyer needs devnet USDC and no SOL.
+- AfriRadar runs its own facilitator and pays the network fee, so a buyer needs USDC on mainnet or devnet and no SOL.
 - A request that fails is never charged.
 - Any x402 client works, for example `@x402/fetch` with `@x402/svm`. The `afriradar` npm package wraps it: `npx afriradar --help`.
 

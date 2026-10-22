@@ -1,6 +1,8 @@
 # Judge quickstart: verify AfriRadar Data API in five minutes
 
-Everything below runs against the live deployment on Solana devnet. Nothing needs an account, an API key or a wallet until step 4, and even there the page sends you free test USDC.
+The API is live on **Solana mainnet for real USDC** and on devnet with free test USDC. The first real-USDC payments: data [3m6KcD...](https://explorer.solana.com/tx/3m6KcDXypfBW9TWsjzJTi2EFYHuWZSZzi2MWejF6ZdcNJjVTZCF7bUETnSeeuRg746wb2tbpN9VbVpdFKqopfX6D); analyst deposit [SoC3i4...](https://explorer.solana.com/tx/SoC3i4vuaTZuNczNEW6o5H1NWBgWiDiBKK2AE4SWPFwK12MT3VRZQg92BwJn1EMeDGyV7nPdtUr9eYnRm3eHPXS) and settlement of 0.004328 with the rest refunded [5XmChR...](https://explorer.solana.com/tx/5XmChRiNPYeeAM4tudd2DRFfFKEUXBrnzt5gW28DLdBHqc3rADkipJrpBvKBpzEvrpknjXaVmiKP4tYtxp6PEr72).
+
+Steps 1 to 3 use devnet so you spend nothing. Nothing needs an account, an API key or a wallet until step 4, and even there the page sends you free test USDC, or you can pay real USDC on mainnet.
 
 ## 1. Pay for data with no setup (1 minute)
 
@@ -18,7 +20,7 @@ Same thing as JSON: https://api.afriradar.com/v1/proof/cap
 
 ## 3. Check our ledger against the chain (30 seconds)
 
-In **Public ledger**, press **Check the latest 50**, or **Recount everything**. Choose **Solana public RPC** if you do not want to read through our relay.
+In **Public ledger**, press **Check the latest 50**, or **Recount everything**. Choose **Mainnet** to recount the real-USDC payments. Choose **Solana public RPC** if you do not want to read through our relay.
 
 **What proves it:** your browser reads each payment from Solana and compares the amount with our ledger. Every settled row must be on chain, paid to the treasury, for exactly the amount listed. The same check from a terminal:
 
@@ -35,7 +37,7 @@ npx afriradar verify
 
 **What proves it:** the payer in the receipt and in the ledger is your own address.
 
-MetaMask is not offered: its Solana wallet signs on mainnet only, so it cannot pay on devnet.
+**With real USDC:** set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). The cheapest request costs $0.001 and you still need no SOL. The receipt and the ledger row are tagged mainnet.
 
 ## 5. See the 402 yourself (30 seconds)
 
@@ -43,7 +45,7 @@ MetaMask is not offered: its Solana wallet signs on mainnet only, so it cannot p
 curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 ```
 
-**What proves it:** `402 Payment Required` with a `PAYMENT-REQUIRED` header (base64 JSON): price, devnet USDC mint, payee, and x402 Bazaar call instructions for agents.
+**What proves it:** `402 Payment Required` with a `PAYMENT-REQUIRED` header (base64 JSON): price, payee and x402 Bazaar call instructions for agents, offered twice: devnet USDC first, then mainnet USDC.
 
 ## 6. Let an agent pay over MCP (1 minute)
 
