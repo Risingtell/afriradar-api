@@ -25,7 +25,8 @@ In **Public ledger**, press **Check the latest 50**, or **Recount everything**. 
 **What proves it:** your browser reads each payment from Solana and compares the amount with our ledger. Every settled row must be on chain, paid to the treasury, for exactly the amount listed. The same check from a terminal:
 
 ```bash
-npx afriradar verify
+npx afriradar verify --mainnet   # the real-USDC payments
+npx afriradar verify             # devnet
 ```
 
 ## 4. Pay from your own wallet (2 minutes)

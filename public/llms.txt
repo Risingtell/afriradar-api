@@ -37,7 +37,7 @@ Categories: money-market, bond, dollar, equity, balanced, shariah, reit, ethical
 ## MCP
 
 - [Hosted MCP server](https://api.afriradar.com/mcp): stateless Streamable HTTP. Free tools: afriradar_catalog, afriradar_search, afriradar_overview, afriradar_status. Paid tools, charged per call over x402 inside MCP (`@x402/mcp`): afriradar_fund, afriradar_history, afriradar_category, afriradar_top, afriradar_compare, afriradar_kenya, afriradar_kenya_scheme.
-- Local MCP server that pays with your own wallet and budget: `npx afriradar mcp`.
+- Local MCP server that pays with your own wallet and budget: `npx afriradar mcp` (add `--mainnet` to pay real USDC).
 
 ## More
 

@@ -132,9 +132,9 @@ A cron runs at 41 minutes past every hour: the demo wallet buys one fund through
 Every settlement is written to the public ledger, and a failed payment keeps the facilitator's reason. Anyone can recount the ledger from the chain, in the browser on the [demo page](https://api.afriradar.com/#ledger) or from a terminal:
 
 ```
-npx afriradar verify
+npx afriradar verify --mainnet     # real USDC; leave out --mainnet to recount devnet
 ...
-matched         58 of 58 ledger rows found on chain for the exact amount
+matched         2 of 2 ledger rows found on chain for the exact amount
 OK: every payment the API claims is on chain.
 ```
 
@@ -150,7 +150,10 @@ npx afriradar search sanlam                # free: ids for Nigeria and Kenya
 npx afriradar wallet --new                 # prints an address; fund it at faucet.circle.com (Solana Devnet)
 npx afriradar kenya                        # 0.002 USDC, prints the Solana transaction
 npx afriradar ask "Which Kenyan unit trust schemes grew fastest last quarter?"
+npx afriradar verify --mainnet             # free: recount the real-USDC payments from Solana
 ```
+
+Add `--mainnet` to any command to pay real USDC from the same wallet file. You still need no SOL.
 
 The same package is an SDK (`createAfriRadar`) and an MCP server (`afriradar mcp`) so any MCP-capable agent can buy data with its own wallet and a budget. See [packages/afriradar](packages/afriradar).
 
