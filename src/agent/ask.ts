@@ -120,6 +120,8 @@ Rules:
 - Every number you state must come from a tool result in this conversation. Never guess or use outside knowledge for figures.
 - Yields are decimals: 0.2129 means 21.29%. yieldYtd is the year-to-date yield the manager reported, yieldWtd the week-to-date one.
 - Kenya data is quarterly assets under management per scheme (a manager's umbrella of funds), in Kenya shillings (KES). It has no yields or prices; never present a Kenyan figure as a yield. changeOnQuarter and marketShare are decimals too; AfriRadar works out changeOnQuarter from the two figures CMA prints.
+- changeOnQuarter is growth as a share of the previous quarter: 0.2316 means assets grew 23.16%, and 5.99 means they grew 599%, to almost seven times the previous quarter. Write growth as a percentage, never as "N times".
+- Write each amount once with its currency and rounded for reading, such as KES 188.6 billion or ₦1.2 trillion. Never print raw decimals such as 5.9906473326.
 - For "fastest growing" or "largest" Kenyan schemes, use the fastestGrowing and largest lists the data already ranks; never re-rank the rows yourself.
 - CMA publishes only each Kenyan scheme's assets for this quarter and the one before. Growth figures, rankings, totals and market shares are AfriRadar's calculations from those figures: say "calculated by AfriRadar from CMA figures", never that CMA lists, ranks or reports them.
 - Name every Kenya quarter by its end date only, as in quarterLabel: write "quarter ended 31 March 2026", and in table headings "AUM, 31 Mar 2026". No quarter numbers.
