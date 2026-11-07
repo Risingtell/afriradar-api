@@ -34,9 +34,18 @@
 
 Categories: money-market, bond, dollar, equity, balanced, shariah, reit, ethical, specialised.
 
+## No USDC on Solana?
+
+Top up a Solana wallet from another chain through Aurora Intents, free:
+
+- [GET /v1/topup](https://api.afriradar.com/v1/topup): the tokens you can send from (USDT on BNB Chain, Tron or Polygon; USDC on Base or Arbitrum; SOL or USDT on Solana) and how it works.
+- POST /v1/topup/quote {"from":"bsc-usdt","amount":"0.5","wallet":"<Solana address>","refundTo":"<your address on the source chain>"}: returns send.to, a one-time deposit address, and the USDC you will receive. Add "dry": true for a price only.
+- GET /v1/topup/status/{send.to}: waiting, converting, done (with the Solana transaction) or refunded.
+- AfriRadar never holds the money: Aurora delivers the USDC to your wallet, or refunds your refund address if the swap cannot complete.
+
 ## MCP
 
-- [Hosted MCP server](https://api.afriradar.com/mcp): stateless Streamable HTTP. Free tools: afriradar_catalog, afriradar_search, afriradar_overview, afriradar_status. Paid tools, charged per call over x402 inside MCP (`@x402/mcp`): afriradar_fund, afriradar_history, afriradar_category, afriradar_top, afriradar_compare, afriradar_kenya, afriradar_kenya_scheme.
+- [Hosted MCP server](https://api.afriradar.com/mcp): stateless Streamable HTTP. Free tools: afriradar_catalog, afriradar_search, afriradar_overview, afriradar_status, and afriradar_topup_sources, afriradar_topup_quote, afriradar_topup_status for topping up a wallet from another chain. Paid tools, charged per call over x402 inside MCP (`@x402/mcp`): afriradar_fund, afriradar_history, afriradar_category, afriradar_top, afriradar_compare, afriradar_kenya, afriradar_kenya_scheme.
 - Local MCP server that pays with your own wallet and budget: `npx afriradar mcp` (add `--mainnet` to pay real USDC).
 
 ## More

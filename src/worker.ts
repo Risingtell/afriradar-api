@@ -29,6 +29,8 @@ export type Env = {
   MAINNET_RPC_URL?: string;
   DATA_BASE_URL: string; // https://afriradar.com
   AI_MODEL?: string;
+  /** Aurora Intents key from studio.aurora.dev: turns on /v1/topup. Aurora says it is not secret; kept as a secret anyway. */
+  AURORA_APP_KEY?: string;
 };
 
 const MONITOR_CRON = "41 * * * *"; // wrangler.toml [triggers]
@@ -70,6 +72,7 @@ async function build(env: Env): Promise<Built> {
     mainnet: env.MAINNET_RPC_URL ? { rpcUrl: env.MAINNET_RPC_URL, readChain: chainReader(jsonRpc(env.MAINNET_RPC_URL), env.TREASURY, USDC_MAINNET) } : undefined,
     demoSigner,
     feePayer,
+    aurora: env.AURORA_APP_KEY ? { appKey: env.AURORA_APP_KEY } : undefined,
   });
   return { app, upto, db, demoSigner, networks };
 }

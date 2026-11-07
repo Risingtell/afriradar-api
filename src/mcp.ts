@@ -13,14 +13,21 @@ import type { Db } from "./db.js";
 import { CATEGORIES, isCategory } from "./data/model.js";
 import * as kenya from "./data/kenya.js";
 import * as q from "./data/queries.js";
+import { TOPUP_SOURCES, TopupError, visitorOf, type TopupService } from "./topup.js";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 export const MCP_SERVER = { name: "afriradar", version: "1.0.0" };
 
-class ToolInputError extends Error {}
+class ToolInputError extends Error {
+  constructor(message: string, readonly data?: Record<string, unknown>) {
+    super(message);
+  }
+}
 type Args = Record<string, unknown>;
 type ToolResult = { content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown>; isError?: boolean; _meta?: Record<string, unknown> };
-export type McpTool = { name: string; description: string; inputSchema: Record<string, unknown>; price?: number; run: (args: Args) => Promise<unknown> };
+/** `visitor` is the caller's IP, for tools with a per-visitor allowance. */
+export type ToolContext = { visitor: string };
+export type McpTool = { name: string; description: string; inputSchema: Record<string, unknown>; price?: number; run: (args: Args, ctx: ToolContext) => Promise<unknown> };
 
 const str = (args: Args, key: string) => {
   const v = args[key];
@@ -40,7 +47,44 @@ const schema = (properties: Record<string, unknown> = {}, required: string[] = [
 const CATEGORY = { type: "string", enum: Object.keys(CATEGORIES), description: "Fund category" };
 const FUND_ID = { type: "string", description: 'Fund id from afriradar_search, e.g. "money-market/aiico-money-market-fund"' };
 
-export function mcpTools(db: Db, extra: { status: () => Promise<unknown>; networks?: string[] }): McpTool[] {
+// Free tools that let an agent with no USDC on Solana top up its wallet from another chain first.
+// They share each visitor's hourly allowance with the HTTP routes. An error keeps its details for the
+// agent: the route's minimum, and whether trying again later can help.
+function topupTools(topup: TopupService): McpTool[] {
+  const run = <T>(work: () => Promise<T>) =>
+    work().catch((e: unknown) => {
+      if (e instanceof TopupError) throw new ToolInputError(e.message, { error: e.message, status: e.status, retryLater: e.status === 429 || e.status >= 500, ...e.extra });
+      throw e;
+    });
+  return [
+    {
+      name: "afriradar_topup_sources",
+      description: "Free. No USDC on Solana yet? Lists the tokens and chains (USDT on BNB Chain or Tron, USDC on Base or Arbitrum, and more) that Aurora Intents turns into USDC in your Solana wallet, so you can pay AfriRadar over x402 on mainnet.",
+      inputSchema: schema(),
+      run: async () => topup.about(),
+    },
+    {
+      name: "afriradar_topup_quote",
+      description: "Free. Get a one-time deposit address: send `amount` of the source token to send.to and Aurora Intents delivers USDC on Solana to `wallet`. With dry: true it only prices the swap and creates no address. refundTo is your own address on the source chain, where a swap that cannot complete is refunded (optional for Solana sources). AfriRadar never holds the money.",
+      inputSchema: schema({
+        from: { type: "string", enum: TOPUP_SOURCES.map((s) => s.id), description: "Source token and chain" },
+        amount: { type: "string", description: 'Amount of the source token, e.g. "0.5"' },
+        wallet: { type: "string", description: "Solana address that receives the USDC (optional for a dry price check)" },
+        refundTo: { type: "string", description: "Your address on the source chain, for refunds" },
+        dry: { type: "boolean", description: "true: price only, no deposit address" },
+      }, ["from", "amount"]),
+      run: (a, ctx) => run(() => topup.quote(a, ctx.visitor)),
+    },
+    {
+      name: "afriradar_topup_status",
+      description: "Free. Progress of a deposit from afriradar_topup_quote: waiting, converting, done (with the Solana transaction) or refunded.",
+      inputSchema: schema({ depositAddress: { type: "string", description: "send.to from afriradar_topup_quote" } }, ["depositAddress"]),
+      run: (a, ctx) => run(() => topup.status(str(a, "depositAddress"), ctx.visitor)),
+    },
+  ];
+}
+
+export function mcpTools(db: Db, extra: { status: () => Promise<unknown>; networks?: string[]; topup?: TopupService }): McpTool[] {
   return [
     {
       name: "afriradar_catalog",
@@ -135,6 +179,7 @@ export function mcpTools(db: Db, extra: { status: () => Promise<unknown>; networ
       price: PRODUCTS.kenyaScheme.price,
       run: async (a) => found("scheme", await kenya.kenyaScheme(db, str(a, "scheme"))),
     },
+    ...(extra.topup ? topupTools(extra.topup) : []),
   ];
 }
 
@@ -142,18 +187,18 @@ const asResult = (data: unknown): ToolResult => ({
   content: [{ type: "text", text: JSON.stringify(data) }],
   structuredContent: data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : { result: data },
 });
-const errorResult = (message: string): ToolResult => ({ content: [{ type: "text", text: message }], isError: true });
+const errorResult = (message: string, data?: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text: message }], ...(data ? { structuredContent: data } : {}), isError: true });
 
 /** `networks`: where paid tools accept payment, devnet first. */
-export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402ResourceServer; treasury: string; networks: Network[]; status: () => Promise<unknown> }) {
-  const tools = mcpTools(opts.db, { status: opts.status, networks: opts.networks });
+export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402ResourceServer; treasury: string; networks: Network[]; status: () => Promise<unknown>; topup?: TopupService }) {
+  const tools = mcpTools(opts.db, { status: opts.status, networks: opts.networks, topup: opts.topup });
   const byName = new Map(tools.map((t) => [t.name, t]));
 
-  const plain = (t: McpTool) => async (args: Args): Promise<ToolResult> => {
+  const plain = (t: McpTool, visitor = "local") => async (args: Args): Promise<ToolResult> => {
     try {
-      return asResult(await t.run(args));
+      return asResult(await t.run(args, { visitor }));
     } catch (e) {
-      if (e instanceof ToolInputError) return errorResult(`${e.message}; you were not charged`);
+      if (e instanceof ToolInputError) return errorResult(`${e.message}; you were not charged`, e.data);
       throw e;
     }
   };
@@ -181,7 +226,7 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
   const reply = (id: Rpc["id"], result: unknown) => ({ jsonrpc: "2.0", id: id ?? null, result });
   const fail = (id: Rpc["id"], code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
-  async function handle(m: Rpc) {
+  async function handle(m: Rpc, visitor: string) {
     const params = m.params ?? {};
     switch (m.method) {
       case "initialize": {
@@ -202,7 +247,7 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
         const tool = byName.get(name);
         if (!tool) return fail(m.id, -32602, `unknown tool ${name}`);
         const args = (params.arguments ?? {}) as Args;
-        const result = tool.price ? await (await paid()).get(name)!(args, { _meta: params._meta as Record<string, unknown> | undefined }) : await plain(tool)(args);
+        const result = tool.price ? await (await paid()).get(name)!(args, { _meta: params._meta as Record<string, unknown> | undefined }) : await plain(tool, visitor)(args);
         return reply(m.id, result);
       }
       default:
@@ -215,7 +260,8 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
     if (!body || typeof body !== "object") return c.json(fail(null, -32700, "parse error: send a JSON-RPC message"), 400);
     const messages = Array.isArray(body) ? body : [body];
     // Notifications and client responses carry no id and get no reply.
-    const replies = (await Promise.all(messages.filter((m) => m.method && m.id !== undefined && m.id !== null).map(handle))).filter(Boolean);
+    const visitor = visitorOf(c);
+    const replies = (await Promise.all(messages.filter((m) => m.method && m.id !== undefined && m.id !== null).map((m) => handle(m, visitor)))).filter(Boolean);
     if (!replies.length) return c.body(null, 202);
     return c.json(Array.isArray(body) ? replies : replies[0]);
   });

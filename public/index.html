@@ -24,6 +24,7 @@
     <a class="logo" href="/"><img src="/mark.svg" alt="" width="34" height="34">AfriRadar<small>Data API</small></a>
     <nav aria-label="Main">
       <a href="#try">Try it</a>
+      <a href="#topup" class="topup-hint">Top up</a>
       <a href="#how">How it works</a>
       <a href="#proof">Proof</a>
       <a href="#prices">Prices</a>
@@ -152,6 +153,45 @@
             <p class="muted">The answer, the itemized bill and the Solana transaction appear here.</p>
           </div>
           <p class="disclaimer"><b>Disclaimer:</b> AfriRadar publishes data for information only. It is not investment advice. Past returns do not predict future returns.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band--night" id="topup">
+    <div class="wrap">
+      <p class="eyebrow">Top up from any chain <span class="tag tag--live">mainnet</span> <span class="tag tag--devnet">Aurora Intents</span></p>
+      <h2 class="h-l">No USDC on Solana? Send what you hold.</h2>
+      <p class="lead">USDT on BNB Chain, Tron or Polygon, USDC on Base or Arbitrum, or SOL: get a one-time deposit address, send from any wallet or exchange, and Aurora Intents puts USDC in your own Solana wallet in under a minute. Then pay above with My wallet on mainnet. AfriRadar never holds your money: if the swap cannot complete, Aurora returns it to your refund address.</p>
+      <div class="console">
+        <div class="controls">
+          <div class="field">
+            <label for="topup-from">Send from</label>
+            <select id="topup-from"></select>
+          </div>
+          <div class="field">
+            <label for="topup-amount">Amount (<span id="topup-token">USDT</span>)</label>
+            <input id="topup-amount" inputmode="decimal" autocomplete="off" value="0.5">
+          </div>
+          <div class="field">
+            <label for="topup-wallet">Your Solana wallet, which receives the USDC</label>
+            <input id="topup-wallet" autocomplete="off" spellcheck="false" placeholder="Solana address">
+          </div>
+          <div class="field" id="topup-refund-field">
+            <label for="topup-refund">Your <span id="topup-chain">BNB Smart Chain</span> address, for refunds</label>
+            <input id="topup-refund" autocomplete="off" spellcheck="false" placeholder="0x...">
+          </div>
+          <p class="wallet-line" id="topup-estimate">Checking the live price...</p>
+          <button class="btn btn--gold" id="topup-go" type="button">Get a deposit address</button>
+        </div>
+        <div class="output" aria-live="polite">
+          <div class="out-head">
+            <span class="eyebrow" style="margin:0">Deposit</span>
+            <span class="out-status" id="topup-status">Nothing created yet.</span>
+          </div>
+          <div id="topup-result">
+            <p class="muted">The deposit address, the exact amount to send and live progress appear here. Each address is for one deposit.</p>
+          </div>
         </div>
       </div>
     </div>

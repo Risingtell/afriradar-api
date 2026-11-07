@@ -7,6 +7,7 @@ import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
 import type { TransactionModifyingSigner } from "@solana/kit";
 import type { Wallet } from "@wallet-standard/base";
 import { connect, disconnect, onWalletsChange, signsMainnetOnly, solanaWallets } from "./wallet.js";
+import { initTopup, prefillTopupWallet } from "./topup.js";
 import { verify, verifyRecent } from "../packages/afriradar/src/verify.js";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -32,7 +33,7 @@ let net: Net = "devnet";
 let own: { wallet: Wallet; signer: TransactionModifyingSigner; address: string } | null = null;
 const WALLET_HINT: Record<Net, string> = {
   devnet: $("wallet-line").innerHTML,
-  mainnet: "Pays real USDC on Solana mainnet from your own Phantom, Solflare, Backpack or MetaMask. A data request costs $0.001 to $0.005; a question locks at most $0.05 and refunds what it does not use. You need no SOL: the facilitator pays the network fee.",
+  mainnet: 'Pays real USDC on Solana mainnet from your own Phantom, Solflare, Backpack or MetaMask. A data request costs $0.001 to $0.005; a question locks at most $0.05 and refunds what it does not use. You need no SOL: the facilitator pays the network fee. <span class="topup-hint">No USDC on Solana? <a href="#topup">Top up your wallet from another chain</a>.</span>',
 };
 
 // ---------- small safe markdown: escape first, then bold and pipe tables ----------
@@ -237,6 +238,7 @@ function renderWallets() {
       if (w) await disconnect(w).catch(() => undefined);
     });
     void showBalance(own.address);
+    prefillTopupWallet(own.address);
     return;
   }
   const all = solanaWallets();
@@ -275,7 +277,7 @@ async function showBalance(addr: string) {
     if (n === "mainnet") {
       $("wallet-line").innerHTML = bal > 0
         ? `Mainnet USDC balance: ${bal}. This pays real USDC. You need no SOL: the facilitator pays the network fee.`
-        : `This wallet holds no USDC on Solana mainnet (address ${esc(addr)}). Add a little: $0.10 covers about 20 data requests.`;
+        : `This wallet holds no USDC on Solana mainnet (address ${esc(addr)}). Add a little: $0.10 covers about 20 data requests.<span class="topup-hint"> <a href="#topup">Top it up from another chain</a>: USDT on BNB Chain or Tron, USDC on Base, and more.</span>`;
       $("faucet-box").innerHTML = "";
       return;
     }
@@ -452,6 +454,7 @@ $("run").addEventListener("click", () => void run());
 onWalletsChange(() => { if (payWith === "own") renderWallets(); });
 
 void loadCatalog();
+void initTopup();
 $("run-proof").addEventListener("click", () => void runProof());
 $("recount-recent").addEventListener("click", () => void recount(false));
 $("recount-all").addEventListener("click", () => void recount(true));

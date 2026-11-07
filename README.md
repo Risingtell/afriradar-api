@@ -26,6 +26,7 @@ Both are read, checked and published by [afriradar.com](https://afriradar.com). 
 | Live proof that Solana enforces the cap | https://api.afriradar.com/v1/proof/cap |
 | Hourly end-to-end payment check | https://api.afriradar.com/v1/status |
 | Hosted MCP server, paid tools over x402 | `https://api.afriradar.com/mcp` |
+| No USDC on Solana? Top up from another chain (Aurora Intents) | [Top-up panel](https://api.afriradar.com/#topup), [`GET /v1/topup`](https://api.afriradar.com/v1/topup) |
 | For language models and agents | [/llms.txt](https://api.afriradar.com/llms.txt), [/discovery/resources](https://api.afriradar.com/discovery/resources) |
 | Networks | Solana **mainnet**, real USDC (mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`); Solana devnet, test USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). Every 402 offers both. |
 | First real-USDC payments on mainnet | data [3m6KcD...](https://explorer.solana.com/tx/3m6KcDXypfBW9TWsjzJTi2EFYHuWZSZzi2MWejF6ZdcNJjVTZCF7bUETnSeeuRg746wb2tbpN9VbVpdFKqopfX6D); analyst deposit [SoC3i4...](https://explorer.solana.com/tx/SoC3i4vuaTZuNczNEW6o5H1NWBgWiDiBKK2AE4SWPFwK12MT3VRZQg92BwJn1EMeDGyV7nPdtUr9eYnRm3eHPXS) and settlement [5XmChR...](https://explorer.solana.com/tx/5XmChRiNPYeeAM4tudd2DRFfFKEUXBrnzt5gW28DLdBHqc3rADkipJrpBvKBpzEvrpknjXaVmiKP4tYtxp6PEr72) |
@@ -67,6 +68,7 @@ The facilitator runs inside the same Cloudflare Worker as the API and pays the n
 | `POST /v1/ask` | metered, at most 0.05 | The AI analyst answers a question from the data |
 | `GET /v1`, `/v1/overview`, `/v1/search?q=`, `/v1/payments` | free | Catalog, totals, id search, ledger |
 | `GET /v1/status`, `/v1/proof/cap`, `/discovery/resources`, `POST /mcp` | free | Hourly check results, live cap proof, x402 Bazaar listing, MCP server |
+| `GET /v1/topup`, `POST /v1/topup/quote`, `GET /v1/topup/status/:address` | free | Top up a Solana wallet with USDC from USDT or USDC on another chain, through Aurora Intents |
 
 All prices come from one list, [`src/catalog.ts`](src/catalog.ts). The x402 route config, the free catalog, the demo page and the analyst's tool prices are all generated from it, so they cannot disagree.
 
@@ -102,13 +104,33 @@ To show the amount is the only reason for the failure, the script also simulates
 
 ## Agents: hosted MCP, x402 inside MCP, discovery
 
-`https://api.afriradar.com/mcp` is a stateless MCP server (Streamable HTTP). Free tools (`afriradar_catalog`, `afriradar_search`, `afriradar_overview`, `afriradar_status`) answer directly. Paid tools (`afriradar_fund`, `afriradar_history`, `afriradar_category`, `afriradar_top`, `afriradar_compare`, `afriradar_kenya`, `afriradar_kenya_scheme`) charge the same prices over x402 inside MCP with [`@x402/mcp`](https://www.npmjs.com/package/@x402/mcp): the first call returns the price, an x402 MCP client pays in `_meta` and calls again, and the settlement lands in the same public ledger as `mcp://tool/<name>`. A tool that fails is never charged. [`scripts/mcp-pay.ts`](scripts/mcp-pay.ts) makes one paid call with the official client.
+`https://api.afriradar.com/mcp` is a stateless MCP server (Streamable HTTP). Free tools (`afriradar_catalog`, `afriradar_search`, `afriradar_overview`, `afriradar_status`) answer directly. Paid tools (`afriradar_fund`, `afriradar_history`, `afriradar_category`, `afriradar_top`, `afriradar_compare`, `afriradar_kenya`, `afriradar_kenya_scheme`) charge the same prices over x402 inside MCP with [`@x402/mcp`](https://www.npmjs.com/package/@x402/mcp): the first call returns the price, an x402 MCP client pays in `_meta` and calls again, and the settlement lands in the same public ledger as `mcp://tool/<name>`. A tool that fails is never charged. [`scripts/mcp-pay.ts`](scripts/mcp-pay.ts) makes one paid call with the official client. Three more free tools (`afriradar_topup_sources`, `afriradar_topup_quote`, `afriradar_topup_status`) let an agent with no USDC on Solana top up its own wallet first, as described [below](#no-usdc-on-solana-top-up-from-another-chain).
 
 ```json
 { "mcpServers": { "afriradar": { "url": "https://api.afriradar.com/mcp" } } }
 ```
 
 Every paid HTTP route declares x402 Bazaar discovery metadata, so its 402 tells an agent how to call it (path parameters, query, body). [`/discovery/resources`](https://api.afriradar.com/discovery/resources) lists every route and MCP tool in the Bazaar format, and [`/llms.txt`](https://api.afriradar.com/llms.txt) describes the API for language models. See [`src/mcp.ts`](src/mcp.ts) and [`src/discovery.ts`](src/discovery.ts).
+
+## No USDC on Solana? Top up from another chain
+
+This API is paid in USDC on Solana, but most crypto held in Nigeria and Kenya is USDT on BNB Chain or Tron, and many agents hold USDC on Base. [Aurora Intents](https://docs.intents.aurora.dev) closes that gap. A buyer asks for a one-time deposit address, sends the tokens from any wallet or exchange, and Aurora's intents network delivers USDC to the buyer's own Solana wallet, ready to pay on mainnet.
+
+```
+POST /v1/topup/quote {"from":"bsc-usdt","amount":"0.5","wallet":"<Solana address>","refundTo":"0x..."}
+<- send.to: a one-time BNB Chain deposit address, send.amount: 0.5 USDT
+   receive.usdc: 0.489 (at least 0.484) into the buyer's wallet, estimatedSeconds: 34
+GET /v1/topup/status/<send.to>
+<- PENDING_DEPOSIT, then PROCESSING, then SUCCESS with received.usdc and the Solana transaction
+```
+
+- **AfriRadar never holds the money.** The deposit address belongs to the intents network, the USDC goes straight to the buyer's wallet, and a swap that cannot complete is refunded to the buyer's own address on the source chain.
+- **Sources:** USDT on BNB Chain, Tron and Polygon; USDC on Base and Arbitrum; SOL and USDT on Solana (`GET /v1/topup` lists them). With `"dry": true` a quote prices the swap and creates no address, which the page uses for its live estimate.
+- **Minimums move with network fees.** On 7 November 2026 a quote accepted 0.10 USDT from BNB Chain or Polygon, 0.10 USDC from Arbitrum, 0.15 from Base and about 0.001 SOL; Tron needed about 2.65 USDT. A quote below the floor is refused with the current minimum in the source token.
+- **The key's quota is protected.** Each visitor gets 30 deposit addresses, 120 price checks and 600 status checks an hour, shared between the HTTP routes and the MCP tools, and the whole API stays inside Aurora's hourly limit. The same price check within 30 seconds, or status check within 5 seconds, is answered from a cache, and the page asks for a price only once the panel is on screen.
+- **For people and agents.** The [Top-up panel](https://api.afriradar.com/#topup) on the demo page fills in a connected wallet, shows the live price and tracks the deposit. Agents get the same as free MCP tools.
+
+See [`src/fund.ts`](src/fund.ts), [`web/fund.ts`](web/fund.ts) and [`test/fund.test.ts`](test/fund.test.ts).
 
 ## Mainnet and devnet side by side
 
@@ -167,7 +189,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 87 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
+npm test                 # 109 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, top-ups, SDK, chain verifier
 npm run typecheck
 ```
 
@@ -192,6 +214,7 @@ A keyed RPC is needed because Solana's public RPC refuses requests that come fro
 | x402 Bazaar discovery | [`src/discovery.ts`](src/discovery.ts) |
 | Hourly end-to-end payment monitor | [`src/monitor.ts`](src/monitor.ts) |
 | Test USDC faucet for visitors' wallets | [`src/faucet.ts`](src/faucet.ts) |
+| Funding a Solana wallet from other chains, through Aurora Intents | [`src/fund.ts`](src/fund.ts), [`web/fund.ts`](web/fund.ts) |
 | Durable payment-channel storage for the `upto` facilitator, on D1 | [`src/facilitator/storage.ts`](src/facilitator/storage.ts) |
 | Reading a settlement from the chain | [`src/reconcile.ts`](src/reconcile.ts) |
 | Nigeria data: CSV ingest and queries | [`src/data`](src/data) |

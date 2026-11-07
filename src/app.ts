@@ -19,6 +19,7 @@ import * as q from "./data/queries.js";
 import { mountDemo } from "./demo.js";
 import { discoveryExtension, mountDiscovery } from "./discovery.js";
 import { mountFaucet } from "./faucet.js";
+import { TOPUP_ROUTES, topupService, mountTopup } from "./topup.js";
 import { bump, hourOf } from "./limits.js";
 import { mcpTools, mountMcp } from "./mcp.js";
 import { monitorStatus } from "./monitor.js";
@@ -42,6 +43,8 @@ export type Deps = {
   demoSigner?: TransactionSigner;
   /** The facilitator's fee payer: pays the network fee and account rent for faucet sends. */
   feePayer?: TransactionSigner;
+  /** Aurora Intents: top up a Solana wallet from other chains. Without it the /v1/topup routes are off. */
+  aurora?: { appKey: string; fetch?: typeof fetch };
 };
 
 export const MAINNET_ASKS_PER_HOUR = 30;
@@ -72,6 +75,7 @@ export async function createApp(deps: Deps) {
   const mainnet = deps.mainnet;
   const chains = mainnet ? [CHAINS.devnet, CHAINS.mainnet] : [CHAINS.devnet];
   const readChainOn = (network: string | null | undefined) => (network === MAINNET && mainnet ? mainnet.readChain : deps.readChain);
+  const topup = deps.aurora ? topupService({ appKey: deps.aurora.appKey, fetch: deps.aurora.fetch, db, now, treasury: deps.treasury }) : undefined;
 
   const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null }) =>
     db.run(
@@ -218,8 +222,9 @@ export async function createApp(deps: Deps) {
         { id: "kenya", source: "CMA Kenya quarterly statistical bulletin", frequency: "quarterly", latest: await kenya.latestQuarter(db) },
       ],
       categories: Object.entries(CATEGORIES).map(([id, m]) => ({ id, name: m.name })),
-      free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/status", "GET /v1/proof/cap", "GET /v1/redeem/:tx", "GET /discovery/resources", "POST /mcp"],
+      free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/status", "GET /v1/proof/cap", "GET /v1/redeem/:tx", "GET /discovery/resources", "POST /mcp", ...(topup ? TOPUP_ROUTES : [])],
       mcp: "https://api.afriradar.com/mcp: the same data as MCP tools, paid tools charged over x402 inside MCP.",
+      ...(topup ? { topup: "No USDC on Solana? GET /v1/topup: send USDT or USDC from BNB Chain, Tron, Base, Arbitrum or Polygon, and Aurora Intents delivers USDC to your Solana wallet." } : {}),
       products: Object.entries(PRODUCTS).map(([id, p]) => ({ id, method: p.method, path: p.path, scheme: p.scheme, price: usd(p.price), priceMicroUsdc: p.price, summary: p.summary, example: p.example })),
       failedPayments: "A request that errors is never charged. If a settlement is broadcast but unconfirmed, the server checks the chain before replying; anything still unresolved can be redeemed at /v1/redeem/:tx.",
     });
@@ -313,9 +318,10 @@ export async function createApp(deps: Deps) {
 
   if (deps.demoSigner) mountDemo(app, { db, signer: deps.demoSigner, rpcUrl: deps.rpcUrl, explorer, now });
   if (deps.demoSigner && deps.feePayer) mountFaucet(app, { db, source: deps.demoSigner, feePayer: deps.feePayer, rpcUrl: deps.rpcUrl, explorer, now });
+  if (topup) mountTopup(app, { service: topup });
   const networks = chains.map((ch) => ch.network as Network);
-  mountMcp(app, { db, resourceServer, treasury: deps.treasury, networks, status });
-  mountDiscovery(app, { resourceServer, treasury: deps.treasury, networks, tools: mcpTools(db, { status, networks }), now });
+  mountMcp(app, { db, resourceServer, treasury: deps.treasury, networks, status, topup });
+  mountDiscovery(app, { resourceServer, treasury: deps.treasury, networks, tools: mcpTools(db, { status, networks, topup }), now });
 
   // ---------- paid ----------
   app.use(paymentMiddleware(routes, resourceServer));

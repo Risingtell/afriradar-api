@@ -38,7 +38,7 @@ npx afriradar verify             # devnet
 
 **What proves it:** the payer in the receipt and in the ledger is your own address.
 
-**With real USDC:** set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). The cheapest request costs $0.001 and you still need no SOL. The receipt and the ledger row are tagged mainnet.
+**With real USDC:** set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). The cheapest request costs $0.001 and you still need no SOL. The receipt and the ledger row are tagged mainnet. No USDC on Solana? See step 8.
 
 ## 5. See the 402 yourself (30 seconds)
 
@@ -63,6 +63,14 @@ npx tsx scripts/mcp-pay.ts
 https://api.afriradar.com/v1/status
 
 **What proves it:** every hour the demo wallet buys a fund through the normal x402 flow, and every six hours it also asks the analyst a question. A check passes only if the payment settled on Solana and the data came back. The page shows the last check and the 7-day pass rate.
+
+## 8. Top up from another chain, through Aurora Intents (30 seconds, free)
+
+```bash
+curl -s -X POST https://api.afriradar.com/v1/topup/quote -H "content-type: application/json" -d '{"from":"bsc-usdt","amount":"0.5","dry":true}'
+```
+
+**What proves it:** a live Aurora Intents price: the USDC on Solana that 0.5 USDT on BNB Chain buys, the least it will deliver and how long it takes. A dry quote creates nothing. Without `"dry"`, and with your Solana `wallet` and your own `refundTo` address, the same call returns a one-time deposit address. The **Top up** panel on the page does this for you and tracks the deposit until the USDC lands in your wallet.
 
 ## Run the tests
 
