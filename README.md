@@ -4,8 +4,8 @@ African investment fund data, sold one request at a time over [x402](https://x40
 
 The data comes from the regulators:
 
-- **Nigeria:** the SEC's weekly valuation report for every collective investment scheme, 217 funds holding ₦9.88trn (week ended 9 October 2026), weekly since January 2025.
-- **Kenya:** the Capital Markets Authority's quarterly statistical bulletin, assets under management for every unit trust scheme, 43 schemes holding KES 851.7bn (quarter ended 31 March 2026), quarterly since December 2023.
+- **Nigeria:** the SEC's weekly valuation report for every collective investment scheme, 218 funds holding ₦10.10trn (week ended 23 October 2026), weekly since January 2025.
+- **Kenya:** the Capital Markets Authority's quarterly statistical bulletin, assets under management for every unit trust scheme, 47 schemes holding KES 948.7bn (quarter ended 30 June 2026), quarterly since December 2023.
 
 Both are read, checked and published by [afriradar.com](https://afriradar.com). This API sells them per request.
 
@@ -167,7 +167,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 84 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
+npm test                 # 87 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, SDK, chain verifier
 npm run typecheck
 ```
 

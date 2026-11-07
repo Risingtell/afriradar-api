@@ -143,6 +143,8 @@ export type AskResult = { answer: string; week: string | null; bill: AskBill; st
 /** House style for model output: no em or en dashes; plain hyphens and spaces instead of their non-breaking twins. */
 export const tidy = (s: string) =>
   s
+    // A dash alone in a table cell means "none": it becomes a hyphen, not a stray comma.
+    .replace(/(^|\|)[ \t]*[\u2013\u2014][ \t]*(?=\||$)/gm, "$1 - ")
     .replace(/\s*[\u2013\u2014]\s*/g, ", ")
     .replace(/[\u2010\u2011]/g, "-")
     .replace(/[\u00a0\u202f]/g, " ");
@@ -175,6 +177,18 @@ export const quarterGuard = (answer: string, data: { tool: string }[], latest: s
 
 const tokenPrice = (prompt: number, completion: number) => Math.ceil(((prompt + completion) * ASK_PRICING.perThousandTokens) / 1000);
 
+/**
+ * gpt-oss on Workers AI sometimes hands back its raw transcript as the reply text instead of a tool call
+ * or an answer, as on 7 Nov 2026: "analysisWe need ...<|end|><|start|>assistant to=functions Kenya unit
+ * trusts...<|call|>" (a misspelt tool name the platform could not read as a call). That text is neither,
+ * so it is never shown to the buyer or billed.
+ */
+export const garbled = (content: string | null): boolean =>
+  !!content && (/<\|[a-z_]+\|>/.test(content) || /^(?:analysis|commentary)\S/.test(content.trim()) || /\bto=functions\b/.test(content));
+
+/** Garbled replies a question may get before it fails, unbilled, instead of asking again. */
+const GARBLED_RETRIES = 2;
+
 /** The question rule, also checked before a paid request opens a payment channel. */
 export const questionProblem = (question: string): string | null => {
   const n = question.trim().length;
@@ -200,6 +214,7 @@ export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: 
   ];
   const specs = Object.values(TOOLS).map((t) => t.spec);
 
+  let garbles = 0;
   for (let step = 1; step <= maxSteps + 1; step++) {
     const last = step > maxSteps;
     let turn: LlmTurn;
@@ -207,6 +222,13 @@ export async function ask(db: Db, llm: Llm, question: string, opts: { ceiling?: 
       turn = await llm(messages, last ? [] : specs);
     } catch (e) {
       throw new AskError(`AI model unavailable: ${e instanceof Error ? e.message : String(e)}`, 503);
+    }
+    if (!turn.toolCalls.length && garbled(turn.content)) {
+      // Ask the same step again; the garbled turn's tokens are not billed. A model that keeps garbling
+      // fails the question, and a failed question is never charged.
+      if (++garbles > GARBLED_RETRIES) throw new AskError("AI model returned a garbled reply", 502);
+      step--;
+      continue;
     }
     bill.tokens.prompt += turn.usage.prompt;
     bill.tokens.completion += turn.usage.completion;

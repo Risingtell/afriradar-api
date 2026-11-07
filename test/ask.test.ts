@@ -16,6 +16,8 @@ const scripted = (...turns: LlmTurn[]): Llm & { seen: number } => {
   return llm;
 };
 const turn = (toolCalls: ToolCall[], content: string | null = null, prompt = 1000, completion = 200): LlmTurn => ({ content, toolCalls, usage: { prompt, completion } });
+// A real reply from 7 Nov 2026: a misspelt tool call that Workers AI passed through as text.
+const GARBLED = 'analysisWe need largest scheme and fastest-growing last quarter. Use tool Kenya unit trusts.<|end|><|start|>assistant to=functions Kenya unit trustscommentary{" }<|call|>';
 
 let db: Db;
 beforeAll(async () => { db = await loadedDb(); });
@@ -75,6 +77,40 @@ describe("ask", () => {
   it("strips em dashes from the answer", async () => {
     const r = await ask(db, scripted(turn([], "Yields rose \u2014 slightly.")), "Did yields rise?");
     expect(r.answer).toBe("Yields rose, slightly.");
+    // A dash alone in a table cell is "none", so it stays a hyphen instead of becoming a comma.
+    const t = await ask(db, scripted(turn([], "| Largest | Standard | \u2014 |\n| Fastest | Kibaba | \u2014 | \u2014 |")), "Which is largest?");
+    expect(t.answer).toBe("| Largest | Standard | - |\n| Fastest | Kibaba | - | - |");
+  });
+
+  it("never shows or bills a garbled reply; it asks the same step again", async () => {
+    const llm = scripted(
+      turn([], GARBLED, 2400, 124),
+      turn([call("top_funds", { category: "money-market", by: "yield_ytd", limit: 3 })]),
+      turn([], "First Ally Money Market Fund reported 21.29% for the week ended 2 October 2026."),
+    );
+    const r = await ask(db, llm, "Which money market fund pays the most?");
+    expect(llm.seen).toBe(3);
+    expect(r.answer).toMatch(/^First Ally/);
+    expect(r.steps).toBe(2);
+    expect(r.bill.tokens).toMatchObject({ prompt: 2000, completion: 400 });
+    expect(r.bill.data.map((d) => d.tool)).toEqual(["top_funds"]);
+  });
+
+  it("a model that keeps garbling fails the question (the payment is then cancelled)", async () => {
+    const llm = scripted(turn([], GARBLED), turn([], GARBLED), turn([], GARBLED), turn([], "never reached"));
+    await expect(ask(db, llm, "Which Kenyan unit trust scheme is the largest?")).rejects.toMatchObject({ status: 502 });
+    expect(llm.seen).toBe(3);
+  });
+});
+
+describe("garbled", () => {
+  it("spots the model's raw transcript and leaves real answers alone", async () => {
+    const { garbled } = await import("../src/agent/ask.js");
+    expect(garbled(GARBLED)).toBe(true);
+    expect(garbled("analysisThe user wants the largest fund.")).toBe(true);
+    expect(garbled("Analysis: First Ally Money Market Fund leads with 21.30% year to date.")).toBe(false);
+    expect(garbled("Sanlam is the largest scheme, calculated by AfriRadar from CMA figures.")).toBe(false);
+    expect(garbled(null)).toBe(false);
   });
 });
 
