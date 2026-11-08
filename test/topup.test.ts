@@ -224,6 +224,21 @@ describe("top up from any chain", () => {
     expect(JSON.stringify(done.body)).not.toContain("test-key");
   });
 
+  it("builds explorer links when Aurora sends hashes without them, as it did for the first live top-up", async () => {
+    replies.push(reply(200, {
+      ...STATUS("SUCCESS", {
+        amountOutFormatted: "0.209926", amountOutUsd: "0.2098",
+        originChainTxHashes: [{ hash: "0x1ba28fa61b82e4bb0fa783b268f27a4074b6c458088a3841a0b17685fed71c1c", explorerUrl: "" }],
+        destinationChainTxHashes: [{ hash: "xrK4ZtUVrAgSiA8BrWcum3s98yEZFU3YhxcJFxDtULM5Nuyry2YFWxK7bQoxr8WpfXLS4DzS7C66MkPdXjZFLVT", explorerUrl: "" }],
+      }),
+      quoteResponse: { quoteRequest: { originAsset: asset("base-usdc"), destinationAsset: SOLANA_USDC } },
+    }));
+    const r = await call("/v1/topup/status/0xD1cFC3988d179308015e62dC912ea25E58f4E73c");
+    expect(r.body.originTxs).toEqual([{ hash: "0x1ba28fa61b82e4bb0fa783b268f27a4074b6c458088a3841a0b17685fed71c1c", explorer: "https://basescan.org/tx/0x1ba28fa61b82e4bb0fa783b268f27a4074b6c458088a3841a0b17685fed71c1c" }]);
+    expect(r.body.solanaTxs).toEqual([{ hash: "xrK4ZtUVrAgSiA8BrWcum3s98yEZFU3YhxcJFxDtULM5Nuyry2YFWxK7bQoxr8WpfXLS4DzS7C66MkPdXjZFLVT", explorer: "https://explorer.solana.com/tx/xrK4ZtUVrAgSiA8BrWcum3s98yEZFU3YhxcJFxDtULM5Nuyry2YFWxK7bQoxr8WpfXLS4DzS7C66MkPdXjZFLVT" }]);
+    expect(r.body.message).toBe("Done: 0.209926 USDC arrived in your Solana wallet.");
+  });
+
   it("reports a refund with its reason", async () => {
     replies.push(reply(200, STATUS("REFUNDED", { refundedAmount: "500000000000000000", refundedAmountFormatted: "0.5", refundReason: "deadline passed" })));
     const r = await call(`/v1/topup/status/${DEPOSIT}`);

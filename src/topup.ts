@@ -15,17 +15,20 @@ export const AURORA_API = "https://intents-api.aurora.dev";
 export const SOLANA_USDC = "nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near";
 
 type Kind = "evm" | "tron" | "solana";
-export type TopupSource = { id: string; chain: string; token: string; assetId: string; decimals: number; kind: Kind; max: number };
+/** `tx`: the block explorer's transaction link prefix, used when Aurora sends a hash without a link. */
+export type TopupSource = { id: string; chain: string; token: string; assetId: string; decimals: number; kind: Kind; max: number; tx: string };
+
+const SOLANA_TX = "https://explorer.solana.com/tx/";
 
 /** Asset ids from Aurora's token list (GET /api/tokens), checked against live quotes on 7 November 2026. */
 export const TOPUP_SOURCES: TopupSource[] = [
-  { id: "bsc-usdt", chain: "BNB Smart Chain", token: "USDT", assetId: "nep245:v2_1.omni.hot.tg:56_2CMMyVTGZkeyNZTSvS5sarzfir6g", decimals: 18, kind: "evm", max: 1000 },
-  { id: "tron-usdt", chain: "Tron", token: "USDT", assetId: "nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near", decimals: 6, kind: "tron", max: 1000 },
-  { id: "base-usdc", chain: "Base", token: "USDC", assetId: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", decimals: 6, kind: "evm", max: 1000 },
-  { id: "arb-usdc", chain: "Arbitrum", token: "USDC", assetId: "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near", decimals: 6, kind: "evm", max: 1000 },
-  { id: "pol-usdt", chain: "Polygon", token: "USDT", assetId: "nep245:v2_1.omni.hot.tg:137_3hpYoaLtt8MP1Z2GH1U473DMRKgr", decimals: 6, kind: "evm", max: 1000 },
-  { id: "sol", chain: "Solana", token: "SOL", assetId: "nep141:sol.omft.near", decimals: 9, kind: "solana", max: 10 },
-  { id: "sol-usdt", chain: "Solana", token: "USDT", assetId: "nep141:sol-c800a4bd850783ccb82c2b2c7e84175443606352.omft.near", decimals: 6, kind: "solana", max: 1000 },
+  { id: "bsc-usdt", chain: "BNB Smart Chain", token: "USDT", assetId: "nep245:v2_1.omni.hot.tg:56_2CMMyVTGZkeyNZTSvS5sarzfir6g", decimals: 18, kind: "evm", max: 1000, tx: "https://bscscan.com/tx/" },
+  { id: "tron-usdt", chain: "Tron", token: "USDT", assetId: "nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near", decimals: 6, kind: "tron", max: 1000, tx: "https://tronscan.org/#/transaction/" },
+  { id: "base-usdc", chain: "Base", token: "USDC", assetId: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", decimals: 6, kind: "evm", max: 1000, tx: "https://basescan.org/tx/" },
+  { id: "arb-usdc", chain: "Arbitrum", token: "USDC", assetId: "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near", decimals: 6, kind: "evm", max: 1000, tx: "https://arbiscan.io/tx/" },
+  { id: "pol-usdt", chain: "Polygon", token: "USDT", assetId: "nep245:v2_1.omni.hot.tg:137_3hpYoaLtt8MP1Z2GH1U473DMRKgr", decimals: 6, kind: "evm", max: 1000, tx: "https://polygonscan.com/tx/" },
+  { id: "sol", chain: "Solana", token: "SOL", assetId: "nep141:sol.omft.near", decimals: 9, kind: "solana", max: 10, tx: SOLANA_TX },
+  { id: "sol-usdt", chain: "Solana", token: "USDT", assetId: "nep141:sol-c800a4bd850783ccb82c2b2c7e84175443606352.omft.near", decimals: 6, kind: "solana", max: 1000, tx: SOLANA_TX },
 ];
 
 const REFUND_OK: Record<Kind, (s: string) => boolean> = {
@@ -90,7 +93,12 @@ export function fromUnits(units: bigint, decimals: number): string {
 const num = (v: unknown) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 /** Base units from Aurora: only a plain digit string is trusted. */
 const digits = (v: unknown) => (typeof v === "string" && /^\d{1,40}$/.test(v) ? BigInt(v) : null);
-const txs = (list: unknown) => (Array.isArray(list) ? list : []).map((t: { hash?: string; explorerUrl?: string }) => ({ hash: String(t.hash ?? ""), explorer: t.explorerUrl ?? null }));
+/** Aurora's hashes, each with a link: Aurora's own when it gives one, else built from the chain's explorer. */
+const txs = (list: unknown, prefix?: string) =>
+  (Array.isArray(list) ? list : []).map((t: { hash?: string; explorerUrl?: string }) => {
+    const hash = String(t.hash ?? "");
+    return { hash, explorer: t.explorerUrl || (prefix && hash ? `${prefix}${hash}` : null) };
+  });
 
 type AuroraQuote = {
   depositAddress?: string; depositMemo?: string | null; deadline?: string; timeEstimate?: number;
@@ -300,6 +308,8 @@ export function topupService(opts: { appKey: string; db: Db; now: () => Date; fe
       if (status !== 200 || !state) throw new TopupError("Aurora Intents did not answer the status check. Your deposit is not affected; try again in a moment.", 502);
 
       const d = (json?.swapDetails ?? {}) as AuroraSwap;
+      const originAsset = (json?.quoteResponse as { quoteRequest?: { originAsset?: string } } | undefined)?.quoteRequest?.originAsset;
+      const origin = TOPUP_SOURCES.find((s) => s.assetId === originAsset);
       const refunded = d.refundedAmount && d.refundedAmount !== "0" ? { amount: d.refundedAmountFormatted ?? d.refundedAmount, reason: d.refundReason ?? null } : null;
       const value: TopupStatus = {
         depositAddress: address,
@@ -310,8 +320,8 @@ export function topupService(opts: { appKey: string; db: Db; now: () => Date; fe
         deposited: d.depositedAmountFormatted ?? null,
         received: state === "SUCCESS" && d.amountOutFormatted ? { usdc: d.amountOutFormatted, usd: num(d.amountOutUsd) } : null,
         refunded,
-        originTxs: txs(d.originChainTxHashes),
-        solanaTxs: txs(d.destinationChainTxHashes),
+        originTxs: txs(d.originChainTxHashes, origin?.tx),
+        solanaTxs: txs(d.destinationChainTxHashes, SOLANA_TX),
         via: "Aurora Intents",
       };
       remember(statusCache, address, value);

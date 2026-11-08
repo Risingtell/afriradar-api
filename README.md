@@ -26,7 +26,7 @@ Both are read, checked and published by [afriradar.com](https://afriradar.com). 
 | Live proof that Solana enforces the cap | https://api.afriradar.com/v1/proof/cap |
 | Hourly end-to-end payment check | https://api.afriradar.com/v1/status |
 | Hosted MCP server, paid tools over x402 | `https://api.afriradar.com/mcp` |
-| No USDC on Solana? Top up from another chain (Aurora Intents) | [Top-up panel](https://api.afriradar.com/#topup), [`GET /v1/topup`](https://api.afriradar.com/v1/topup) |
+| No USDC on Solana? Top up from another chain (Aurora Intents) | [Top-up panel](https://api.afriradar.com/#topup), [`GET /v1/topup`](https://api.afriradar.com/v1/topup). First live top-up: 0.22 USDC sent on Base [0x1ba28f...](https://basescan.org/tx/0x1ba28fa61b82e4bb0fa783b268f27a4074b6c458088a3841a0b17685fed71c1c), 0.209926 USDC delivered on Solana [xrK4Zt...](https://explorer.solana.com/tx/xrK4ZtUVrAgSiA8BrWcum3s98yEZFU3YhxcJFxDtULM5Nuyry2YFWxK7bQoxr8WpfXLS4DzS7C66MkPdXjZFLVT) 89 seconds later |
 | For language models and agents | [/llms.txt](https://api.afriradar.com/llms.txt), [/discovery/resources](https://api.afriradar.com/discovery/resources) |
 | Networks | Solana **mainnet**, real USDC (mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`); Solana devnet, test USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). Every 402 offers both. |
 | First real-USDC payments on mainnet | data [3m6KcD...](https://explorer.solana.com/tx/3m6KcDXypfBW9TWsjzJTi2EFYHuWZSZzi2MWejF6ZdcNJjVTZCF7bUETnSeeuRg746wb2tbpN9VbVpdFKqopfX6D); analyst deposit [SoC3i4...](https://explorer.solana.com/tx/SoC3i4vuaTZuNczNEW6o5H1NWBgWiDiBKK2AE4SWPFwK12MT3VRZQg92BwJn1EMeDGyV7nPdtUr9eYnRm3eHPXS) and settlement [5XmChR...](https://explorer.solana.com/tx/5XmChRiNPYeeAM4tudd2DRFfFKEUXBrnzt5gW28DLdBHqc3rADkipJrpBvKBpzEvrpknjXaVmiKP4tYtxp6PEr72) |
@@ -124,6 +124,7 @@ GET /v1/topup/status/<send.to>
 <- PENDING_DEPOSIT, then PROCESSING, then SUCCESS with received.usdc and the Solana transaction
 ```
 
+- **Live on mainnet.** The first top-up, on 8 November 2026: 0.22 USDC sent on Base to a deposit address from `POST /v1/topup/quote` ([0x1ba28f...](https://basescan.org/tx/0x1ba28fa61b82e4bb0fa783b268f27a4074b6c458088a3841a0b17685fed71c1c), 00:51:02 UTC) arrived as 0.209926 USDC in the buyer's own Solana wallet ([xrK4Zt...](https://explorer.solana.com/tx/xrK4ZtUVrAgSiA8BrWcum3s98yEZFU3YhxcJFxDtULM5Nuyry2YFWxK7bQoxr8WpfXLS4DzS7C66MkPdXjZFLVT), 00:52:31 UTC), 89 seconds later.
 - **AfriRadar never holds the money.** The deposit address belongs to the intents network, the USDC goes straight to the buyer's wallet, and a swap that cannot complete is refunded to the buyer's own address on the source chain.
 - **Sources:** USDT on BNB Chain, Tron and Polygon; USDC on Base and Arbitrum; SOL and USDT on Solana (`GET /v1/topup` lists them). With `"dry": true` a quote prices the swap and creates no address, which the page uses for its live estimate.
 - **Minimums move with network fees.** On 7 November 2026 a quote accepted 0.10 USDT from BNB Chain or Polygon, 0.10 USDC from Arbitrum, 0.15 from Base and about 0.001 SOL; Tron needed about 2.65 USDT. A quote below the floor is refused with the current minimum in the source token.
@@ -189,7 +190,7 @@ curl -i https://api.afriradar.com/v1/kenya/unit-trusts
 
 ```bash
 npm install
-npm test                 # 109 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, top-ups, SDK, chain verifier
+npm test                 # 110 tests: data, Kenya, billing rules, facilitator storage, ledger, MCP, discovery, top-ups, SDK, chain verifier
 npm run typecheck
 ```
 

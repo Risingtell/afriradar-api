@@ -70,7 +70,7 @@ https://api.afriradar.com/v1/status
 curl -s -X POST https://api.afriradar.com/v1/topup/quote -H "content-type: application/json" -d '{"from":"bsc-usdt","amount":"0.5","dry":true}'
 ```
 
-**What proves it:** a live Aurora Intents price: the USDC on Solana that 0.5 USDT on BNB Chain buys, the least it will deliver and how long it takes. A dry quote creates nothing. Without `"dry"`, and with your Solana `wallet` and your own `refundTo` address, the same call returns a one-time deposit address. The **Top up** panel on the page does this for you and tracks the deposit until the USDC lands in your wallet.
+**What proves it:** a live Aurora Intents price: the USDC on Solana that 0.5 USDT on BNB Chain buys, the least it will deliver and how long it takes. A dry quote creates nothing. Without `"dry"`, and with your Solana `wallet` and your own `refundTo` address, the same call returns a one-time deposit address. The **Top up** panel on the page does this for you and tracks the deposit until the USDC lands in your wallet. The first live top-up: 0.22 USDC sent on Base ([0x1ba28f...](https://basescan.org/tx/0x1ba28fa61b82e4bb0fa783b268f27a4074b6c458088a3841a0b17685fed71c1c)) arrived as 0.209926 USDC on Solana ([xrK4Zt...](https://explorer.solana.com/tx/xrK4ZtUVrAgSiA8BrWcum3s98yEZFU3YhxcJFxDtULM5Nuyry2YFWxK7bQoxr8WpfXLS4DzS7C66MkPdXjZFLVT)) 89 seconds later.
 
 ## Run the tests
 
