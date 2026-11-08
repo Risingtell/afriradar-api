@@ -19,7 +19,7 @@ Both are read, checked and published by [afriradar.com](https://afriradar.com). 
 |---|---|
 | Live demo, no wallet needed | https://api.afriradar.com |
 | Verify it in five minutes | [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md) |
-| Demo video (2:51) | https://youtu.be/4r-gcgAvx74 |
+| Demo video (2:47) | https://youtu.be/FgOMJ_PJU7A |
 | Pitch deck (PDF, 12 slides) | https://api.afriradar.com/deck.pdf |
 | Catalog and prices (free JSON) | https://api.afriradar.com/v1 |
 | Public payment ledger | https://api.afriradar.com/v1/payments |
