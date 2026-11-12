@@ -11,6 +11,7 @@ import { workersAi } from "./agent/ask.js";
 import { chainReader, createApp } from "./app.js";
 import { MAINNET, NETWORK, USDC_MAINNET } from "./catalog.js";
 import { d1, type Db } from "./db.js";
+import { catchUp, siteWeek } from "./data/freshness.js";
 import { ingest } from "./data/ingest.js";
 import { ingestKenya } from "./data/kenya.js";
 import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
@@ -73,6 +74,7 @@ async function build(env: Env): Promise<Built> {
     demoSigner,
     feePayer,
     aurora: env.AURORA_APP_KEY ? { appKey: env.AURORA_APP_KEY } : undefined,
+    siteWeek: () => siteWeek(env.DATA_BASE_URL),
   });
   return { app, upto, db, demoSigner, networks };
 }
@@ -98,6 +100,12 @@ export default {
         .then(() => console.log("rent cleanup done", network))
         .catch((e) => console.error("rent cleanup failed", network, e));
     if (event.cron === MONITOR_CRON) {
+      // Hourly: pick up a new SEC week as soon as the website has it (src/data/freshness.ts).
+      ctx.waitUntil(
+        catchUp(db, { baseUrl: env.DATA_BASE_URL })
+          .then((r) => (r.ingested || (r.site && r.api && r.site > r.api) ? console.log("catch-up", JSON.stringify(r)) : undefined))
+          .catch((e) => console.error("catch-up failed", e)),
+      );
       if (networks.includes(MAINNET as Network)) ctx.waitUntil(cleanup(MAINNET as Network));
       if (!demoSigner) return;
       const now = new Date(event.scheduledTime);

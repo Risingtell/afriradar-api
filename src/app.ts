@@ -45,6 +45,8 @@ export type Deps = {
   feePayer?: TransactionSigner;
   /** Aurora Intents: top up a Solana wallet from other chains. Without it the /v1/topup routes are off. */
   aurora?: { appKey: string; fetch?: typeof fetch };
+  /** The newest week the website has published (src/data/freshness.ts), so /v1/status can show any gap. */
+  siteWeek?: () => Promise<string | null>;
 };
 
 export const MAINNET_ASKS_PER_HOUR = 30;
@@ -119,7 +121,10 @@ export async function createApp(deps: Deps) {
   const status = async () => {
     const since = new Date(now().getTime() - 7 * 86_400_000).toISOString();
     const p = await db.first<{ settled: number; failed: number }>("SELECT coalesce(sum(status = 'settled'), 0) AS settled, coalesce(sum(status = 'failed'), 0) AS failed FROM payments WHERE created_at >= ?", since);
-    return { ...(await monitorStatus(db, now(), explorer)), payments7d: { settled: p?.settled ?? 0, failed: p?.failed ?? 0 }, ledger: await ledgerTotals() };
+    const [apiWeek, siteWeek] = await Promise.all([q.latestWeek(db), deps.siteWeek ? deps.siteWeek() : Promise.resolve(null)]);
+    // The paid data must never be older than the free website. An hourly job closes any gap within the hour.
+    const data = { week: apiWeek, siteWeek, behindSite: !!(siteWeek && (!apiWeek || apiWeek < siteWeek)) };
+    return { ...(await monitorStatus(db, now(), explorer)), data, payments7d: { settled: p?.settled ?? 0, failed: p?.failed ?? 0 }, ledger: await ledgerTotals() };
   };
 
   const resourceServer = new x402ResourceServer(deps.facilitator)

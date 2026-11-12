@@ -24,7 +24,7 @@ let db: Db;
 let demo: KeyPairSigner;
 let app: Awaited<ReturnType<typeof createApp>>;
 
-async function build(withDemo = true, withMainnet = false) {
+async function build(withDemo = true, withMainnet = false, siteWeek?: () => Promise<string | null>) {
   const feePayer = await generateKeyPairSigner();
   const svm = toFacilitatorSvmSigner(feePayer, { defaultRpcUrl: RPC });
   const networks = (withMainnet ? [NETWORK, MAINNET] : [NETWORK]) as Network[];
@@ -44,6 +44,7 @@ async function build(withDemo = true, withMainnet = false) {
     now: () => NOW,
     demoSigner: withDemo ? demo : undefined,
     feePayer: withDemo ? feePayer : undefined,
+    siteWeek,
   });
 }
 
@@ -106,6 +107,19 @@ describe("monitor status", () => {
     const { body } = await json("/v1/status");
     expect(body.last24h).toEqual({ runs: 2, passed: 1 });
     expect(body.payments7d).toEqual({ settled: 5, failed: 1 });
+  });
+
+  it("shows when the paid data is behind the website", async () => {
+    expect((await json("/v1/status")).body.data).toEqual({ week: "2026-10-02", siteWeek: null, behindSite: false });
+    const saved = app;
+    try {
+      app = await build(true, false, async () => "2026-10-09");
+      expect((await json("/v1/status")).body.data).toEqual({ week: "2026-10-02", siteWeek: "2026-10-09", behindSite: true });
+      app = await build(true, false, async () => "2026-10-02");
+      expect((await json("/v1/status")).body.data.behindSite).toBe(false);
+    } finally {
+      app = saved;
+    }
   });
 });
 
