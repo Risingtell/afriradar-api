@@ -6,9 +6,17 @@ export interface Db {
   all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;
   first<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T | null>;
   run(sql: string, ...params: unknown[]): Promise<{ changes: number }>;
-  /** Runs statements in one transaction: all apply or none do. */
-  batch(stmts: Stmt[]): Promise<void>;
+  /** Runs statements in one transaction: all apply or none do. Returns the rows actually changed. */
+  batch(stmts: Stmt[]): Promise<{ changes: number }>;
 }
+
+/**
+ * The tail of an upsert that writes a row only when a value differs. Without it, re-sending identical rows
+ * rewrites every one of them (and its index entries): three full-history reloads on 12 Nov 2026 wrote
+ * 173,765 rows and used up D1's free 100,000 writes a day. IS NOT treats two NULLs as equal.
+ */
+export const changedOnly = (cols: readonly string[], table: string): string =>
+  `DO UPDATE SET ${cols.map((c) => `${c} = excluded.${c}`).join(", ")} WHERE ${cols.map((c) => `${table}.${c} IS NOT excluded.${c}`).join(" OR ")}`;
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS fund_weeks (
@@ -30,6 +38,17 @@ CREATE TABLE IF NOT EXISTS fund_weeks (
 );
 CREATE INDEX IF NOT EXISTS fund_weeks_week ON fund_weeks (week, category);
 CREATE INDEX IF NOT EXISTS fund_weeks_slug ON fund_weeks (slug, week);
+
+CREATE TABLE IF NOT EXISTS ingest_runs (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  site_week TEXT,
+  api_week TEXT,
+  changed INTEGER NOT NULL DEFAULT 0,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS ingest_runs_kind_at ON ingest_runs (kind, at);
 
 CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
@@ -97,7 +116,7 @@ CREATE INDEX IF NOT EXISTS checks_at ON checks (at);
 
 type D1Like = {
   prepare(sql: string): { bind(...v: unknown[]): D1StmtLike } & D1StmtLike;
-  batch(stmts: D1StmtLike[]): Promise<unknown>;
+  batch(stmts: D1StmtLike[]): Promise<{ meta?: { changes?: number } }[]>;
 };
 type D1StmtLike = {
   all<T>(): Promise<{ results: T[] }>;
@@ -112,7 +131,9 @@ export function d1(db: D1Like): Db {
     first: <T>(sql: string, ...p: unknown[]) => stmt(sql, p).first<T>(),
     run: async (sql, ...p) => ({ changes: (await stmt(sql, p).run()).meta.changes }),
     batch: async (stmts) => {
-      if (stmts.length) await db.batch(stmts.map((s) => stmt(s.sql, s.params ?? [])));
+      if (!stmts.length) return { changes: 0 };
+      const results = await db.batch(stmts.map((s) => stmt(s.sql, s.params ?? [])));
+      return { changes: results.reduce((n, r) => n + (r?.meta?.changes ?? 0), 0) };
     },
   };
 }

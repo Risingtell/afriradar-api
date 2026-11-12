@@ -1,7 +1,7 @@
 // Kenya: unit trust schemes from the Capital Markets Authority of Kenya's quarterly statistical
 // bulletin, as AfriRadar publishes them (afriradar.com/data/kenya-unit-trusts-history.csv).
 // Quarterly and per scheme (a manager's umbrella of funds): CMA publishes no prices or yields.
-import type { Db, Stmt } from "../db.js";
+import { changedOnly, type Db, type Stmt } from "../db.js";
 import { parseCsv } from "./csv.js";
 
 export const KENYA_FILE = "kenya-unit-trusts-history";
@@ -56,7 +56,7 @@ export function parseKenya(text: string): KenyaRow[] {
 const COLS = ["key", "quarter", "name", "aum_kes", "prev_aum_kes", "change", "share", "source"] as const;
 const UPSERT = `INSERT INTO kenya_quarters (${COLS.join(", ")})
 SELECT ${COLS.map((c) => `json_extract(value, '$.${c}')`).join(", ")} FROM json_each(?1) WHERE true
-ON CONFLICT (key, quarter) DO UPDATE SET ${COLS.filter((c) => c !== "key" && c !== "quarter").map((c) => `${c} = excluded.${c}`).join(", ")}`;
+ON CONFLICT (key, quarter) ${changedOnly(COLS.filter((c) => c !== "key" && c !== "quarter"), "kenya_quarters")}`;
 
 export function kenyaStatements(rows: KenyaRow[], chunk = 300): Stmt[] {
   const out: Stmt[] = [];
@@ -71,8 +71,8 @@ export async function ingestKenya(db: Db, opts: { baseUrl: string; fetchImpl?: t
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
   const rows = parseKenya(await res.text());
   if (!rows.length) throw new Error(`${url} has no rows`);
-  await db.batch(kenyaStatements(rows));
-  return { rows: rows.length, quarters: [...new Set(rows.map((r) => r.quarter))].sort() };
+  const { changes } = await db.batch(kenyaStatements(rows));
+  return { rows: rows.length, changed: changes, quarters: [...new Set(rows.map((r) => r.quarter))].sort() };
 }
 
 // ---------- queries ----------

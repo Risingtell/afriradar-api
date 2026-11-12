@@ -11,7 +11,8 @@ import { workersAi } from "./agent/ask.js";
 import { chainReader, createApp } from "./app.js";
 import { MAINNET, NETWORK, USDC_MAINNET } from "./catalog.js";
 import { d1, type Db } from "./db.js";
-import { catchUp, siteWeek } from "./data/freshness.js";
+import { catchUp, recordRun, siteWeek } from "./data/freshness.js";
+import { latestWeek } from "./data/queries.js";
 import { ingest } from "./data/ingest.js";
 import { ingestKenya } from "./data/kenya.js";
 import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
@@ -103,7 +104,7 @@ export default {
       // Hourly: pick up a new SEC week as soon as the website has it (src/data/freshness.ts).
       ctx.waitUntil(
         catchUp(db, { baseUrl: env.DATA_BASE_URL })
-          .then((r) => (r.ingested || (r.site && r.api && r.site > r.api) ? console.log("catch-up", JSON.stringify(r)) : undefined))
+          .then((r) => (r.ingested || r.skipped || (r.site && r.api && r.site > r.api) ? console.log("catch-up", JSON.stringify(r)) : undefined))
           .catch((e) => console.error("catch-up failed", e)),
       );
       if (networks.includes(MAINNET as Network)) ctx.waitUntil(cleanup(MAINNET as Network));
@@ -118,15 +119,18 @@ export default {
     }
     ctx.waitUntil(
       (async () => {
+        const at = new Date(event.scheduledTime);
         try {
           const r = await ingest(db, { baseUrl: env.DATA_BASE_URL });
-          console.log("ingest", JSON.stringify(r.map((x) => [x.category, x.rows, x.weeks.at(-1)])));
+          console.log("ingest", r.changed, "rows written", JSON.stringify(r.map((x) => [x.category, x.rows, x.weeks.at(-1)])));
+          await recordRun(db, { at, kind: "daily", site: null, api: await latestWeek(db), changed: r.changed });
         } catch (e) {
           console.error("ingest failed", e);
+          await recordRun(db, { at, kind: "daily", site: null, api: null, changed: 0, error: String((e as Error).message ?? e).slice(0, 300) }).catch(() => undefined);
         }
         try {
           const k = await ingestKenya(db, { baseUrl: env.DATA_BASE_URL });
-          console.log("kenya ingest", k.rows, k.quarters.at(-1));
+          console.log("kenya ingest", k.changed, "rows written of", k.rows, k.quarters.at(-1));
         } catch (e) {
           console.error("kenya ingest failed", e); // Nigeria above is already stored; Kenya retries tomorrow
         }

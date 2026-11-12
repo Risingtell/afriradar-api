@@ -1,5 +1,5 @@
 // Pulls AfriRadar's public weekly CSVs and stores them. A file that fails to parse is rejected whole.
-import type { Db, Stmt } from "../db.js";
+import { changedOnly, type Db, type Stmt } from "../db.js";
 import { parseCsv } from "./csv.js";
 import { CATEGORIES, fromCsvRow, type Category, type FundWeek } from "./model.js";
 
@@ -16,9 +16,11 @@ const toRecord = (f: FundWeek) => ({
 });
 
 // One bound parameter carries a JSON array of rows, so a whole week is one statement (D1 caps bound params at 100).
+// A row that is already stored unchanged is not written again (changedOnly), so re-sending a week or the whole
+// history costs only the rows that differ.
 const UPSERT = `INSERT INTO fund_weeks (${COLS.join(", ")})
 SELECT ${COLS.map((c) => `json_extract(value, '$.${c}')`).join(", ")} FROM json_each(?1) WHERE true
-ON CONFLICT (key, week) DO UPDATE SET ${COLS.filter((c) => c !== "key" && c !== "week").map((c) => `${c} = excluded.${c}`).join(", ")}`;
+ON CONFLICT (key, week) ${changedOnly(COLS.filter((c) => c !== "key" && c !== "week"), "fund_weeks")}`;
 
 /** Upsert statements for a set of rows, chunked so no single statement grows past D1's size limit. */
 export function upsertStatements(rows: FundWeek[], chunk = 300): Stmt[] {
@@ -47,7 +49,8 @@ export function parseFile(text: string, expected: Category): FundWeek[] {
   return rows;
 }
 
-export type IngestResult = { category: Category; rows: number; weeks: string[] }[];
+/** Per category file; `changed` = rows actually written (new or different), the figure D1 bills. */
+export type IngestResult = { category: Category; rows: number; weeks: string[] }[] & { changed: number };
 
 /** Fetches each category's CSV (latest week, or full history) and stores every row in one transaction. */
 export async function ingest(
@@ -55,7 +58,7 @@ export async function ingest(
   opts: { baseUrl: string; history?: boolean; fetchImpl?: typeof fetch },
 ): Promise<IngestResult> {
   const get = opts.fetchImpl ?? fetch;
-  const result: IngestResult = [];
+  const result = [] as unknown as IngestResult;
   const stmts: Stmt[] = [];
   for (const [category, meta] of Object.entries(CATEGORIES) as [Category, (typeof CATEGORIES)[Category]][]) {
     const url = `${opts.baseUrl.replace(/\/$/, "")}/data/${meta.file}${opts.history ? "-history" : ""}.csv`;
@@ -66,6 +69,6 @@ export async function ingest(
     stmts.push(...upsertStatements(rows));
     result.push({ category, rows: rows.length, weeks: [...new Set(rows.map((r) => r.week))].sort() });
   }
-  await db.batch(stmts);
+  result.changed = (await db.batch(stmts)).changes;
   return result;
 }

@@ -16,8 +16,10 @@ export function sqlite(path = ":memory:"): Db & { raw: DatabaseSync } {
     batch: async (stmts) => {
       raw.exec("BEGIN");
       try {
-        for (const s of stmts) raw.prepare(s.sql).run(...bind(s.params ?? []));
+        let changes = 0;
+        for (const s of stmts) changes += Number(raw.prepare(s.sql).run(...bind(s.params ?? [])).changes);
         raw.exec("COMMIT");
+        return { changes };
       } catch (e) {
         raw.exec("ROLLBACK");
         throw e;
