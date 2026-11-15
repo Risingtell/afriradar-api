@@ -1,6 +1,7 @@
 // Concordium Agent Registry checks for paying Solana wallets: verified only when the key binding, an Active
 // agent and a matching card all hold; failures never verify and are never cached.
 import { describe, expect, it } from "vitest";
+import { claimMismatch } from "../src/concordium/access.js";
 import { agentCheck, CHECK_TTL_MS, CONCORDIUM, lookUpAgent, registryRpc, solanaKeyHex } from "../src/concordium/registry.js";
 import { NETWORK } from "../src/catalog.js";
 import { sqlite } from "../src/sqlite.js";
@@ -107,5 +108,14 @@ describe("the registry client", () => {
     await expect(registryRpc(toolError)("agent_of", {})).rejects.toThrow(/bad token/);
     const down = (async () => new Response("no", { status: 502 })) as unknown as typeof fetch;
     await expect(registryRpc(down)("agent_of", {})).rejects.toThrow(/HTTP 502/);
+  });
+});
+
+describe("holding a named agent wallet to account", () => {
+  it("refuses, before any charge, a payment signed by a different wallet than the one named", () => {
+    expect(claimMismatch(null, "anything")).toBeNull();
+    expect(claimMismatch(WALLET, WALLET)).toBeNull();
+    expect(claimMismatch(WALLET, "OtherWallet")).toMatch(/signed by OtherWallet, not the agent named/);
+    expect(claimMismatch(WALLET, null)).toMatch(/could not be read/);
   });
 });

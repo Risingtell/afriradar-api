@@ -25,6 +25,8 @@ import { mcpTools, mountMcp } from "./mcp.js";
 import { monitorStatus } from "./monitor.js";
 import { capProof } from "./proof.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
+import { AGENT_WALLET_HEADER, claimMismatch, mainnetAskCap, VERIFIED_AGENT_ASKS_PER_HOUR } from "./concordium/access.js";
+import { agentCheck, CONCORDIUM, type ConcordiumNet, type registryRpc } from "./concordium/registry.js";
 
 export type Deps = {
   db: Db;
@@ -47,6 +49,8 @@ export type Deps = {
   aurora?: { appKey: string; fetch?: typeof fetch };
   /** The newest week the website has published (src/data/freshness.ts), so /v1/status can show any gap. */
   siteWeek?: () => Promise<string | null>;
+  /** Concordium Agent Registry checks for paying wallets (src/concordium/). Without it they are off. */
+  agents?: { rpc: ReturnType<typeof registryRpc>; concordium?: ConcordiumNet };
 };
 
 export const MAINNET_ASKS_PER_HOUR = 30;
@@ -77,6 +81,8 @@ export async function createApp(deps: Deps) {
   const mainnet = deps.mainnet;
   const chains = mainnet ? [CHAINS.devnet, CHAINS.mainnet] : [CHAINS.devnet];
   const readChainOn = (network: string | null | undefined) => (network === MAINNET && mainnet ? mainnet.readChain : deps.readChain);
+  const agents = deps.agents;
+  const checkAgent = agents ? (wallet: string, network: string) => agentCheck(db, wallet, network, { rpc: agents.rpc, concordium: agents.concordium, now: now() }) : undefined;
   const topup = deps.aurora ? topupService({ appKey: deps.aurora.appKey, fetch: deps.aurora.fetch, db, now, treasury: deps.treasury }) : undefined;
 
   const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null }) =>
@@ -150,6 +156,17 @@ export async function createApp(deps: Deps) {
         payer: r.payer ?? null,
         status,
       });
+      // Look the payer up in the Concordium Agent Registry so the public ledger can show its badge. At most
+      // once an hour per wallet, and never holding the buyer's answer back by more than a moment.
+      if (checkAgent && r.payer && status !== "refunded") {
+        await Promise.race([checkAgent(r.payer, ctx.requirements.network).catch(() => undefined), new Promise((ok) => setTimeout(ok, 1500))]);
+      }
+    })
+    // A buyer that named a verified agent wallet for the agents' question cap must pay from that wallet.
+    .onAfterVerify(async (ctx) => {
+      const t = ctx.transportContext as { request?: { adapter?: { getHeader(name: string): string | undefined } } } | undefined;
+      const reason = claimMismatch(t?.request?.adapter?.getHeader(AGENT_WALLET_HEADER) ?? null, ctx.result.payer ?? null);
+      if (reason) return { abort: true as const, reason: "agent_wallet_mismatch", message: reason };
     })
     // A "settlement_pending" answer means the transaction was broadcast but its confirmation was
     // not seen (often an RPC rate limit). The buyer may already have paid, so read the chain
@@ -203,7 +220,7 @@ export async function createApp(deps: Deps) {
   );
 
   const app = new Hono();
-  app.use("*", cors({ origin: "*", exposeHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"], allowHeaders: ["Content-Type", "PAYMENT-SIGNATURE", "X-PAYMENT"] }));
+  app.use("*", cors({ origin: "*", exposeHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"], allowHeaders: ["Content-Type", "PAYMENT-SIGNATURE", "X-PAYMENT", AGENT_WALLET_HEADER] }));
   app.onError((e, c) => {
     if (e instanceof AskError) return c.json({ error: e.message }, e.status);
     console.error(e);
@@ -227,7 +244,7 @@ export async function createApp(deps: Deps) {
         { id: "kenya", source: "CMA Kenya quarterly statistical bulletin", frequency: "quarterly", latest: await kenya.latestQuarter(db) },
       ],
       categories: Object.entries(CATEGORIES).map(([id, m]) => ({ id, name: m.name })),
-      free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/status", "GET /v1/proof/cap", "GET /v1/redeem/:tx", "GET /discovery/resources", "POST /mcp", ...(topup ? TOPUP_ROUTES : [])],
+      free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/status", ...(agents ? ["GET /v1/agents/:wallet"] : []), "GET /v1/proof/cap", "GET /v1/redeem/:tx", "GET /discovery/resources", "POST /mcp", ...(topup ? TOPUP_ROUTES : [])],
       mcp: "https://api.afriradar.com/mcp: the same data as MCP tools, paid tools charged over x402 inside MCP.",
       ...(topup ? { topup: "No USDC on Solana? GET /v1/topup: send USDT or USDC from BNB Chain, Tron, Base, Arbitrum or Polygon, and Aurora Intents delivers USDC to your Solana wallet." } : {}),
       products: Object.entries(PRODUCTS).map(([id, p]) => ({ id, method: p.method, path: p.path, scheme: p.scheme, price: usd(p.price), priceMicroUsdc: p.price, summary: p.summary, example: p.example })),
@@ -246,7 +263,9 @@ export async function createApp(deps: Deps) {
     if (want !== "all" && !chains.some((ch) => ch.id === want)) return c.json({ error: `network must be ${chains.map((ch) => ch.id).join(", ")} or all` }, 400);
     const only = want === "all" ? null : CHAINS[want as keyof typeof CHAINS].network;
     const rows = await db.all<Record<string, string>>(
-      `SELECT tx, network, route, scheme, amount, ceiling, payer, status, detail, created_at FROM payments ${only ? "WHERE network = ?" : ""} ORDER BY created_at DESC, id LIMIT ? OFFSET ?`,
+      `SELECT p.tx, p.network, p.route, p.scheme, p.amount, p.ceiling, p.payer, p.status, p.detail, p.created_at, a.verified AS agent_verified, a.badge AS agent_badge
+       FROM payments p LEFT JOIN agent_checks a ON a.wallet = p.payer AND a.solana_network = p.network
+       ${only ? "WHERE p.network = ?" : ""} ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?`,
       ...(only ? [only] : []), Math.min(Number(c.req.query("limit")) || 50, 200), Math.max(Number(c.req.query("offset")) || 0, 0),
     );
     const t = await ledgerTotals();
@@ -256,7 +275,7 @@ export async function createApp(deps: Deps) {
       monitor: t.monitor,
       networks: t.networks,
       network: want,
-      recent: rows.map((r) => ({ ...r, chain: chainOf(r.network).id, usdc: Number(r.amount) / 1e6, monitor: r.detail === "monitor", demo: !!deps.demoSigner && r.payer === deps.demoSigner.address && r.detail !== "monitor", explorer: r.tx ? explorer(r.tx, r.network) : null })),
+      recent: rows.map(({ agent_verified, agent_badge, ...r }) => ({ ...r, agent: Number(agent_verified) === 1 ? { verified: true, badge: agent_badge, check: `/v1/agents/${r.payer}?network=${chainOf(r.network).id}` } : null, chain: chainOf(r.network).id, usdc: Number(r.amount) / 1e6, monitor: r.detail === "monitor", demo: !!deps.demoSigner && r.payer === deps.demoSigner.address && r.detail !== "monitor", explorer: r.tx ? explorer(r.tx, r.network) : null })),
       demoWallet: deps.demoSigner?.address ?? null,
       verify: `These rows are ${want === "all" ? "Solana devnet and mainnet" : chainOf(only).label} transactions (?network=${chains.map((ch) => ch.id).join("|")}|all). Recount them from the chain in your browser at https://api.afriradar.com/#ledger, or run \`npx afriradar verify\`.`,
     });
@@ -274,6 +293,21 @@ export async function createApp(deps: Deps) {
   });
 
   app.get("/v1/status", async (c) => c.json(await status()));
+
+  // Is this Solana wallet a verified Concordium agent? Free, for buyers, sellers and anyone checking the ledger.
+  if (checkAgent && agents) {
+    app.get("/v1/agents/:wallet", async (c) => {
+      const want = c.req.query("network") ?? "devnet";
+      if (!chains.some((ch) => ch.id === want)) return c.json({ error: `network must be ${chains.map((ch) => ch.id).join(" or ")}` }, 400);
+      const check = await checkAgent(c.req.param("wallet"), CHAINS[want as keyof typeof CHAINS].network);
+      const net = CONCORDIUM[agents.concordium ?? "testnet"];
+      return c.json({
+        ...check,
+        registry: { concordium: net.network, cis8004: `${net.cis8004.index},${net.cis8004.subindex}`, cis8: `${net.cis8.index},${net.cis8.subindex}`, explorer: net.explorer },
+        perk: `A verified agent that names its wallet in the ${AGENT_WALLET_HEADER} header may ask ${VERIFIED_AGENT_ASKS_PER_HOUR} mainnet questions an hour instead of ${MAINNET_ASKS_PER_HOUR}, and its payments carry its badge in the public ledger (/v1/payments).`,
+      });
+    });
+  }
 
   // Solana enforces the analyst's cap: simulate the buyer's real channel-open plus an over-cap claim.
   app.get("/v1/proof/cap", async (c) => {
@@ -315,8 +349,12 @@ export async function createApp(deps: Deps) {
     const problem = questionProblem(String(body.question ?? ""));
     if (problem) return c.json({ error: `${problem}; you were not charged` }, 400);
     if (paidNetwork(paid) === MAINNET) {
-      const ip = c.req.header("cf-connecting-ip") ?? "local";
-      if ((await bump(db, "mainnet-ask", `ip:${ip}:${hourOf(now())}`, now())) > MAINNET_ASKS_PER_HOUR) return c.json({ error: `mainnet questions are limited to ${MAINNET_ASKS_PER_HOUR} an hour per visitor; you were not charged` }, 429);
+      const cap = await mainnetAskCap({
+        db, now: now(), ip: c.req.header("cf-connecting-ip") ?? "local", visitorCap: MAINNET_ASKS_PER_HOUR,
+        claimed: c.req.header(AGENT_WALLET_HEADER) ?? null,
+        check: checkAgent ? (wallet) => checkAgent(wallet, MAINNET) : undefined,
+      });
+      if (!cap.ok) return c.json({ error: cap.error }, 429);
     }
     return next();
   });

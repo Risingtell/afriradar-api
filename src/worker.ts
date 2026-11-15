@@ -12,6 +12,7 @@ import { chainReader, createApp } from "./app.js";
 import { MAINNET, NETWORK, USDC_MAINNET } from "./catalog.js";
 import { d1, type Db } from "./db.js";
 import { catchUp, recordRun, siteWeek } from "./data/freshness.js";
+import { registryRpc, type ConcordiumNet } from "./concordium/registry.js";
 import { latestWeek } from "./data/queries.js";
 import { ingest } from "./data/ingest.js";
 import { ingestKenya } from "./data/kenya.js";
@@ -33,6 +34,8 @@ export type Env = {
   AI_MODEL?: string;
   /** Aurora Intents key from studio.aurora.dev: turns on /v1/topup. Aurora says it is not secret; kept as a secret anyway. */
   AURORA_APP_KEY?: string;
+  /** "testnet" or "mainnet": check paying wallets against that Concordium Agent Registry. Unset = off. */
+  CONCORDIUM_AGENTS?: string;
 };
 
 const MONITOR_CRON = "41 * * * *"; // wrangler.toml [triggers]
@@ -76,6 +79,7 @@ async function build(env: Env): Promise<Built> {
     feePayer,
     aurora: env.AURORA_APP_KEY ? { appKey: env.AURORA_APP_KEY } : undefined,
     siteWeek: () => siteWeek(env.DATA_BASE_URL),
+    agents: env.CONCORDIUM_AGENTS === "testnet" || env.CONCORDIUM_AGENTS === "mainnet" ? { rpc: registryRpc(), concordium: env.CONCORDIUM_AGENTS as ConcordiumNet } : undefined,
   });
   return { app, upto, db, demoSigner, networks };
 }

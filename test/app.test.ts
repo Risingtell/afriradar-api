@@ -11,6 +11,8 @@ import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme as ExactFacilitator } from "@x402/svm/exact/facilitator";
 import { InMemoryPaymentChannelStorage, UptoSvmScheme as UptoFacilitator } from "@x402/svm/upto/facilitator";
 import { createApp, MAINNET_ASKS_PER_HOUR } from "../src/app.js";
+import { AGENT_WALLET_HEADER, VERIFIED_AGENT_ASKS_PER_HOUR } from "../src/concordium/access.js";
+import { solanaKeyHex } from "../src/concordium/registry.js";
 import { MAINNET, NETWORK, PRODUCTS, USDC_DEVNET, USDC_MAINNET } from "../src/catalog.js";
 import { hourOf } from "../src/limits.js";
 import type { Db } from "../src/db.js";
@@ -24,7 +26,7 @@ let db: Db;
 let demo: KeyPairSigner;
 let app: Awaited<ReturnType<typeof createApp>>;
 
-async function build(withDemo = true, withMainnet = false, siteWeek?: () => Promise<string | null>) {
+async function build(withDemo = true, withMainnet = false, siteWeek?: () => Promise<string | null>, extra: Partial<Parameters<typeof createApp>[0]> = {}) {
   const feePayer = await generateKeyPairSigner();
   const svm = toFacilitatorSvmSigner(feePayer, { defaultRpcUrl: RPC });
   const networks = (withMainnet ? [NETWORK, MAINNET] : [NETWORK]) as Network[];
@@ -45,6 +47,7 @@ async function build(withDemo = true, withMainnet = false, siteWeek?: () => Prom
     demoSigner: withDemo ? demo : undefined,
     feePayer: withDemo ? feePayer : undefined,
     siteWeek,
+    ...extra,
   });
 }
 
@@ -273,3 +276,73 @@ describe("mainnet", () => {
     expect(write.status).toBe(400);
   });
 });
+
+describe("Concordium agents", () => {
+  const AGENT = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+  const STRANGER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+  const badge = "JyP9X11eGJ1sYCvZWkWg6";
+  // A registry where AGENT is bound, Active and its card matches; every other wallet has no agent.
+  const rpc = async (tool: string, args: Record<string, any>) => {
+    if (tool === "agent_by_external_reference") {
+      return args.external_reference.key.public_key_hex === solanaKeyHex(AGENT)
+        ? { token_id: "7", token_address: badge, owner_account: "4mX6mBtX2FUgoW8hMio2hcjZsh57hcPG2gN9vTi71bYrb5FoTj", agent_uri: "https://api.afriradar.com/a.json", status: "Active" }
+        : null;
+    }
+    if (tool === "verify_agent_card") return { match: true };
+    return null;
+  };
+  let ccd: Awaited<ReturnType<typeof createApp>>;
+  const get = async (path: string, init?: RequestInit) => {
+    const res = await ccd.fetch(new Request(`https://api.afriradar.com${path}`, init));
+    return { status: res.status, body: (await res.json().catch(() => null)) as Record<string, any> };
+  };
+  const header = Buffer.from(JSON.stringify({ x402Version: 2, accepted: { network: MAINNET } })).toString("base64");
+  const ask = (claimed?: string) => get(PRODUCTS.ask.path, {
+    method: "POST",
+    headers: { "content-type": "application/json", "PAYMENT-SIGNATURE": header, ...(claimed ? { [AGENT_WALLET_HEADER]: claimed } : {}) },
+    body: JSON.stringify({ question: "What is the best fund?" }),
+  });
+
+  beforeAll(async () => {
+    ccd = await build(true, true, undefined, { agents: { rpc } });
+  });
+
+  it("says whether a wallet is a verified agent, free, with the registry it read", async () => {
+    const yes = await get(`/v1/agents/${AGENT}?network=mainnet`);
+    expect(yes.status).toBe(200);
+    expect(yes.body).toMatchObject({ verified: true, solanaNetwork: MAINNET, agent: { badge, status: "Active", cardMatches: true }, registry: { concordium: "testnet", cis8004: "12802,0", cis8: "12801,0" } });
+    expect((await get(`/v1/agents/${STRANGER}`)).body).toMatchObject({ verified: false, solanaNetwork: NETWORK, reason: "no Concordium agent is registered for this wallet" });
+    expect((await get(`/v1/agents/${AGENT}?network=testnet`)).status).toBe(400);
+    expect((await get("/v1")).body.free).toContain("GET /v1/agents/:wallet");
+  });
+
+  it("is off, and not advertised, without the Concordium setting", async () => {
+    expect((await json(`/v1/agents/${AGENT}`)).status).toBe(404);
+    expect((await json("/v1")).body.free).not.toContain("GET /v1/agents/:wallet");
+  });
+
+  it("shows the badge beside each payment from a verified agent in the public ledger", async () => {
+    await db.run("INSERT INTO payments (id, tx, network, route, scheme, amount, payer, status, created_at) VALUES ('ag1', 'ag1', ?, '/v1/x', 'exact', '1000', ?, 'settled', ?)", MAINNET, AGENT, NOW.toISOString());
+    await db.run("INSERT INTO payments (id, tx, network, route, scheme, amount, payer, status, created_at) VALUES ('st1', 'st1', ?, '/v1/x', 'exact', '1000', ?, 'settled', ?)", MAINNET, STRANGER, NOW.toISOString());
+    await get(`/v1/agents/${AGENT}?network=mainnet`);
+    await get(`/v1/agents/${STRANGER}?network=mainnet`);
+    const rows = (await get("/v1/payments?network=mainnet")).body.recent as { tx: string; agent: unknown }[];
+    expect(rows.find((r) => r.tx === "ag1")?.agent).toEqual({ verified: true, badge, check: `/v1/agents/${AGENT}?network=mainnet` });
+    expect(rows.find((r) => r.tx === "st1")?.agent).toBeNull();
+  });
+
+  it("gives a verified agent that names its wallet the agents' mainnet cap, counted per badge", async () => {
+    // This visitor's own cap is used up.
+    await db.run("INSERT INTO kv (ns, k, v, updated_at) VALUES ('mainnet-ask', ?, ?, ?) ON CONFLICT (ns, k) DO UPDATE SET v = excluded.v", `ip:local:${hourOf(NOW)}`, String(MAINNET_ASKS_PER_HOUR), NOW.toISOString());
+    expect((await ask()).status).toBe(429);
+    const stranger = await ask(STRANGER);
+    expect(stranger.status).toBe(429);
+    expect(stranger.body.error).toMatch(/verified Concordium agent/);
+    expect((await ask(AGENT)).status).not.toBe(429);
+    await db.run("INSERT INTO kv (ns, k, v, updated_at) VALUES ('mainnet-ask', ?, ?, ?) ON CONFLICT (ns, k) DO UPDATE SET v = excluded.v", `agent:${badge}:${hourOf(NOW)}`, String(VERIFIED_AGENT_ASKS_PER_HOUR), NOW.toISOString());
+    const full = await ask(AGENT);
+    expect(full.status).toBe(429);
+    expect(full.body.error).toMatch(/verified agents may ask/);
+  });
+});
+
