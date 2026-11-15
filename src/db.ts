@@ -50,6 +50,16 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 CREATE INDEX IF NOT EXISTS ingest_runs_kind_at ON ingest_runs (kind, at);
 
+CREATE TABLE IF NOT EXISTS agent_checks (
+  wallet TEXT NOT NULL,
+  solana_network TEXT NOT NULL,
+  verified INTEGER NOT NULL,
+  badge TEXT,
+  body TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  PRIMARY KEY (wallet, solana_network)
+);
+
 CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
   tx TEXT,
