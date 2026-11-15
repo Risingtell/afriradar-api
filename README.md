@@ -19,6 +19,7 @@ Both are read, checked and published by [afriradar.com](https://afriradar.com). 
 |---|---|
 | Live demo, no wallet needed | https://api.afriradar.com |
 | Verify it in five minutes | [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md) |
+| Concordium: which agent is paying | [CONCORDIUM.md](CONCORDIUM.md), [registration page](https://api.afriradar.com/concordium) |
 | Demo video (2:47) | https://youtu.be/FgOMJ_PJU7A |
 | Pitch deck (PDF, 12 slides) | https://api.afriradar.com/deck.pdf |
 | Catalog and prices (free JSON) | https://api.afriradar.com/v1 |
@@ -132,6 +133,10 @@ GET /v1/topup/status/<send.to>
 - **For people and agents.** The [Top-up panel](https://api.afriradar.com/#topup) on the demo page fills in a connected wallet, shows the live price and tracks the deposit. Agents get the same as free MCP tools.
 
 See [`src/fund.ts`](src/fund.ts), [`web/fund.ts`](web/fund.ts) and [`test/fund.test.ts`](test/fund.test.ts).
+
+## Which agent is paying: Concordium
+
+Every paying wallet can be checked against Concordium's Agent Registry: is it bound to a verified Concordium account (CIS-8), does it hold an active agent badge (CIS-8004), and does its Agent Card still match the hash on chain? A verified agent that names its wallet gets 300 mainnet questions an hour instead of 30, and its payments carry its badge in the public ledger; the wallet that signs the payment must be the one it named, or nothing is charged. AfriRadar's own seller and buyer agents are registered the same way, so a buyer can check the `payTo` address before paying. Details, diagram and a one-minute check: [CONCORDIUM.md](CONCORDIUM.md).
 
 ## Mainnet and devnet side by side
 

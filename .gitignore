@@ -20,3 +20,4 @@ spike-worker/
 .wrangler-secrets.json
 public/app.js
 public/app.js.map
+CONCORDIUM-SUBMISSION.md
