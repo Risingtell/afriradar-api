@@ -26,7 +26,10 @@ import { monitorStatus } from "./monitor.js";
 import { capProof } from "./proof.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
 import { AGENT_WALLET_HEADER, claimMismatch, mainnetAskCap, VERIFIED_AGENT_ASKS_PER_HOUR } from "./concordium/access.js";
-import { agentCheck, CONCORDIUM, type ConcordiumNet, type registryRpc } from "./concordium/registry.js";
+import { agentCheck, CONCORDIUM, solanaKeyHex, type ConcordiumNet, type registryRpc } from "./concordium/registry.js";
+import { AFRIRADAR_AGENTS, agentCard, OWNER, sha256Hex } from "./concordium/agents.js";
+import { AGENT_ROLES, registrationPage } from "./concordium/page.js";
+import { MODULE_SCHEMAS } from "./concordium/schemas.js";
 
 export type Deps = {
   db: Db;
@@ -293,6 +296,24 @@ export async function createApp(deps: Deps) {
   });
 
   app.get("/v1/status", async (c) => c.json(await status()));
+
+  // AfriRadar's own agents in the Concordium Agent Registry: their cards (served byte for byte, since the
+  // registry anchors each card's SHA-256), the registration plan, and the page that walks through it.
+  const cardResponse = (text: string) => new Response(text, { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300", "access-control-allow-origin": "*" } });
+  app.get("/.well-known/agent-card.json", () => cardResponse(agentCard(AFRIRADAR_AGENTS.seller)));
+  app.get("/agents/buyer.json", () => cardResponse(agentCard(AFRIRADAR_AGENTS.buyer)));
+  app.get("/concordium/agents", async (c) => c.json({
+    owner: OWNER,
+    registry: CONCORDIUM.testnet,
+    agents: await Promise.all(Object.values(AFRIRADAR_AGENTS).map(async (a) => ({
+      id: a.id, name: a.name, role: AGENT_ROLES[a.id], agentUri: a.agentUri, cardSha256: await sha256Hex(agentCard(a)),
+      wallet: a.wallet, solanaNetwork: a.solanaNetwork, tokenId: a.tokenId, badge: a.badge,
+      externalKey: { namespace: a.solanaNetwork, key_type: "ed25519", public_key_hex: solanaKeyHex(a.wallet) },
+      proof: a.cis8Signature ? { scheme: "solana-ed25519", signature_hex: a.cis8Signature } : null,
+    }))),
+    schemas: MODULE_SCHEMAS,
+  }));
+  app.get("/concordium", (c) => c.html(registrationPage()));
 
   // Is this Solana wallet a verified Concordium agent? Free, for buyers, sellers and anyone checking the ledger.
   if (checkAgent && agents) {

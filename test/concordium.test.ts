@@ -3,7 +3,9 @@
 import { describe, expect, it } from "vitest";
 import { claimMismatch } from "../src/concordium/access.js";
 import { agentCheck, CHECK_TTL_MS, CONCORDIUM, lookUpAgent, registryRpc, solanaKeyHex } from "../src/concordium/registry.js";
-import { NETWORK } from "../src/catalog.js";
+import { readFileSync } from "node:fs";
+import { MAINNET, NETWORK, PRODUCTS } from "../src/catalog.js";
+import { AFRIRADAR_AGENTS, agentCard, sha256Hex } from "../src/concordium/agents.js";
 import { sqlite } from "../src/sqlite.js";
 
 const WALLET = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
@@ -117,5 +119,39 @@ describe("holding a named agent wallet to account", () => {
     expect(claimMismatch(WALLET, WALLET)).toBeNull();
     expect(claimMismatch(WALLET, "OtherWallet")).toMatch(/signed by OtherWallet, not the agent named/);
     expect(claimMismatch(WALLET, null)).toMatch(/could not be read/);
+  });
+});
+
+describe("AfriRadar's own agents", () => {
+  const canonical = JSON.parse(readFileSync("test/fixtures/cis8-canonical.json", "utf8")) as Record<string, string>;
+  const fromHex = (h: string) => Uint8Array.from(h.match(/../g)!.map((x) => parseInt(x, 16)));
+
+  it("holds a valid solana-ed25519 signature from each wallet over its CIS-8 canonical bytes", async () => {
+    for (const a of Object.values(AFRIRADAR_AGENTS)) {
+      const key = await crypto.subtle.importKey("raw", fromHex(solanaKeyHex(a.wallet)), { name: "Ed25519" }, false, ["verify"]);
+      expect(await crypto.subtle.verify({ name: "Ed25519" }, key, fromHex(a.cis8Signature!), fromHex(canonical[a.id]))).toBe(true);
+      // The bytes name the owner's account, the CIS-8 registry and the wallet's network and key.
+      const text = Buffer.from(fromHex(canonical[a.id])).toString("latin1");
+      expect(text.startsWith("CIS-8/v1/canonical")).toBe(true);
+      expect(text).toContain(a.solanaNetwork);
+      expect(canonical[a.id]).toContain(solanaKeyHex(a.wallet));
+    }
+    // A signature from the wrong wallet does not pass.
+    const key = await crypto.subtle.importKey("raw", fromHex(solanaKeyHex(AFRIRADAR_AGENTS.buyer.wallet)), { name: "Ed25519" }, false, ["verify"]);
+    expect(await crypto.subtle.verify({ name: "Ed25519" }, key, fromHex(AFRIRADAR_AGENTS.seller.cis8Signature!), fromHex(canonical.buyer))).toBe(false);
+  });
+
+  it("writes each card the same way every time, naming the testnet registry and the bound wallet", async () => {
+    const seller = agentCard(AFRIRADAR_AGENTS.seller);
+    expect(agentCard(AFRIRADAR_AGENTS.seller)).toBe(seller);
+    const card = JSON.parse(seller);
+    expect(card.x402Support).toBe(true);
+    expect(card.url).toBe(AFRIRADAR_AGENTS.seller.agentUri);
+    expect(card.skills.map((s: { id: string }) => s.id)).toEqual(Object.keys(PRODUCTS));
+    const ext = card.capabilities.extensions[0];
+    expect(ext.uri).toBe("https://docs.concordium.com/a2a-extensions/concordium-badge/v1");
+    expect(ext.params.contracts).toEqual({ cis8004: "ccd:4221332d34e1694168c2a0c0b3fd0f27:12802.0", cis8: "ccd:4221332d34e1694168c2a0c0b3fd0f27:12801.0" });
+    expect(ext.params.externalKey).toMatchObject({ namespace: MAINNET, keyType: "ed25519", address: AFRIRADAR_AGENTS.seller.wallet });
+    expect(await sha256Hex(seller)).toMatch(/^[0-9a-f]{64}$/);
   });
 });

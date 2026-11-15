@@ -13,6 +13,7 @@ import { InMemoryPaymentChannelStorage, UptoSvmScheme as UptoFacilitator } from 
 import { createApp, MAINNET_ASKS_PER_HOUR } from "../src/app.js";
 import { AGENT_WALLET_HEADER, VERIFIED_AGENT_ASKS_PER_HOUR } from "../src/concordium/access.js";
 import { solanaKeyHex } from "../src/concordium/registry.js";
+import { sha256Hex } from "../src/concordium/agents.js";
 import { MAINNET, NETWORK, PRODUCTS, USDC_DEVNET, USDC_MAINNET } from "../src/catalog.js";
 import { hourOf } from "../src/limits.js";
 import type { Db } from "../src/db.js";
@@ -343,6 +344,31 @@ describe("Concordium agents", () => {
     const full = await ask(AGENT);
     expect(full.status).toBe(429);
     expect(full.body.error).toMatch(/verified agents may ask/);
+  });
+});
+
+describe("Concordium registration surface", () => {
+  it("serves each Agent Card byte for byte, and the plan names that exact card's hash", async () => {
+    const plan = (await json("/concordium/agents")).body;
+    expect(plan.owner).toBe("4mX6mBtX2FUgoW8hMio2hcjZsh57hcPG2gN9vTi71bYrb5FoTj");
+    for (const a of plan.agents as { id: string; agentUri: string; cardSha256: string; proof: { scheme: string } }[]) {
+      const res = await app.fetch(new Request(a.agentUri));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      const text = await res.text();
+      expect(await sha256Hex(text)).toBe(a.cardSha256);
+      expect(a.proof.scheme).toBe("solana-ed25519");
+    }
+    expect(Object.keys(plan.schemas)).toEqual(["cis8004", "cis8"]);
+  });
+
+  it("serves the registration page, loading pinned versions of Concordium's wallet libraries", async () => {
+    const res = await app.fetch(new Request("https://api.afriradar.com/concordium"));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("@concordium/browser-wallet-api-helpers@3.3.0");
+    expect(html).toContain("@concordium/web-sdk@12.0.2");
+    expect(html).not.toMatch(/[–—]/);
   });
 });
 
