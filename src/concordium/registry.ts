@@ -118,15 +118,19 @@ export async function lookUpAgent(wallet: string, solanaNetwork: string, opts: {
   }
 }
 
-/** The check for a paying wallet, from the hour-long cache when fresh. A failed lookup is not cached. */
-export async function agentCheck(db: Db, wallet: string, solanaNetwork: string, opts: { rpc: Rpc; concordium?: ConcordiumNet; now?: Date }): Promise<AgentCheck> {
+/**
+ * The check for a wallet, from the hour-long cache when fresh. A failed lookup is never kept, and with
+ * store: false nothing is written at all (the free endpoint, for wallets that have never paid, so random
+ * lookups cannot spend the database's daily write allowance).
+ */
+export async function agentCheck(db: Db, wallet: string, solanaNetwork: string, opts: { rpc: Rpc; concordium?: ConcordiumNet; now?: Date; store?: boolean }): Promise<AgentCheck> {
   const now = opts.now ?? new Date();
   const row = await db.first<{ body: string; checked_at: string }>(
     "SELECT body, checked_at FROM agent_checks WHERE wallet = ? AND solana_network = ?", wallet, solanaNetwork,
   );
   if (row && now.getTime() - Date.parse(row.checked_at) < CHECK_TTL_MS) return JSON.parse(row.body) as AgentCheck;
   const check = await lookUpAgent(wallet, solanaNetwork, { ...opts, now });
-  if (!check.reason.startsWith("the registry could not be read")) {
+  if (opts.store !== false && !check.reason.startsWith("the registry could not be read")) {
     await db.run(
       `INSERT INTO agent_checks (wallet, solana_network, verified, badge, body, checked_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (wallet, solana_network) DO UPDATE SET verified = excluded.verified, badge = excluded.badge, body = excluded.body, checked_at = excluded.checked_at`,

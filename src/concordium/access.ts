@@ -28,7 +28,9 @@ export async function mainnetAskCap(opts: {
   if (opts.claimed && opts.check) {
     const agent = await opts.check(opts.claimed);
     if (agent.verified && agent.agent?.badge) {
-      const n = await bump(opts.db, "mainnet-ask", `agent:${agent.agent.badge}:${hour}`, opts.now);
+      // Per badge and visitor: anyone can name a verified wallet, and a refused claim must not use up the
+      // real agent's allowance.
+      const n = await bump(opts.db, "mainnet-ask", `agent:${agent.agent.badge}:ip:${opts.ip}:${hour}`, opts.now);
       if (n > VERIFIED_AGENT_ASKS_PER_HOUR) return { ok: false, error: `verified agents may ask ${VERIFIED_AGENT_ASKS_PER_HOUR} mainnet questions an hour; you were not charged` };
       return { ok: true, agent };
     }

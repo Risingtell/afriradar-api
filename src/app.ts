@@ -57,6 +57,7 @@ export type Deps = {
 };
 
 export const MAINNET_ASKS_PER_HOUR = 30;
+export const AGENT_CHECKS_PER_HOUR = 60;
 
 /** The network a payment header pays on; null when unreadable (the payment middleware then refuses it). */
 const paidNetwork = (header: string): string | null => {
@@ -85,7 +86,7 @@ export async function createApp(deps: Deps) {
   const chains = mainnet ? [CHAINS.devnet, CHAINS.mainnet] : [CHAINS.devnet];
   const readChainOn = (network: string | null | undefined) => (network === MAINNET && mainnet ? mainnet.readChain : deps.readChain);
   const agents = deps.agents;
-  const checkAgent = agents ? (wallet: string, network: string) => agentCheck(db, wallet, network, { rpc: agents.rpc, concordium: agents.concordium, now: now() }) : undefined;
+  const checkAgent = agents ? (wallet: string, network: string, store = true) => agentCheck(db, wallet, network, { rpc: agents.rpc, concordium: agents.concordium, now: now(), store }) : undefined;
   const topup = deps.aurora ? topupService({ appKey: deps.aurora.appKey, fetch: deps.aurora.fetch, db, now, treasury: deps.treasury }) : undefined;
 
   const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null }) =>
@@ -320,7 +321,13 @@ export async function createApp(deps: Deps) {
     app.get("/v1/agents/:wallet", async (c) => {
       const want = c.req.query("network") ?? "devnet";
       if (!chains.some((ch) => ch.id === want)) return c.json({ error: `network must be ${chains.map((ch) => ch.id).join(" or ")}` }, 400);
-      const check = await checkAgent(c.req.param("wallet"), CHAINS[want as keyof typeof CHAINS].network);
+      const ip = c.req.header("cf-connecting-ip") ?? "local";
+      if ((await bump(db, "agent-check", `ip:${ip}:${hourOf(now())}`, now())) > AGENT_CHECKS_PER_HOUR) return c.json({ error: `the agent check runs ${AGENT_CHECKS_PER_HOUR} times an hour per visitor; try later` }, 429);
+      const wallet = c.req.param("wallet");
+      const network = CHAINS[want as keyof typeof CHAINS].network;
+      // Kept for an hour only for wallets that have paid here; anyone else's check is read and not written.
+      const paid = !!(await db.first("SELECT 1 AS x FROM payments WHERE payer = ? AND network = ? LIMIT 1", wallet, network));
+      const check = await checkAgent(wallet, network, paid);
       const net = CONCORDIUM[agents.concordium ?? "testnet"];
       return c.json({
         ...check,

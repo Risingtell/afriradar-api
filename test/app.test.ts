@@ -10,7 +10,7 @@ import type { Network, SupportedResponse } from "@x402/core/types";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme as ExactFacilitator } from "@x402/svm/exact/facilitator";
 import { InMemoryPaymentChannelStorage, UptoSvmScheme as UptoFacilitator } from "@x402/svm/upto/facilitator";
-import { createApp, MAINNET_ASKS_PER_HOUR } from "../src/app.js";
+import { AGENT_CHECKS_PER_HOUR, createApp, MAINNET_ASKS_PER_HOUR } from "../src/app.js";
 import { AGENT_WALLET_HEADER, VERIFIED_AGENT_ASKS_PER_HOUR } from "../src/concordium/access.js";
 import { solanaKeyHex } from "../src/concordium/registry.js";
 import { sha256Hex } from "../src/concordium/agents.js";
@@ -340,7 +340,7 @@ describe("Concordium agents", () => {
     expect(stranger.status).toBe(429);
     expect(stranger.body.error).toMatch(/verified Concordium agent/);
     expect((await ask(AGENT)).status).not.toBe(429);
-    await db.run("INSERT INTO kv (ns, k, v, updated_at) VALUES ('mainnet-ask', ?, ?, ?) ON CONFLICT (ns, k) DO UPDATE SET v = excluded.v", `agent:${badge}:${hourOf(NOW)}`, String(VERIFIED_AGENT_ASKS_PER_HOUR), NOW.toISOString());
+    await db.run("INSERT INTO kv (ns, k, v, updated_at) VALUES ('mainnet-ask', ?, ?, ?) ON CONFLICT (ns, k) DO UPDATE SET v = excluded.v", `agent:${badge}:ip:local:${hourOf(NOW)}`, String(VERIFIED_AGENT_ASKS_PER_HOUR), NOW.toISOString());
     const full = await ask(AGENT);
     expect(full.status).toBe(429);
     expect(full.body.error).toMatch(/verified agents may ask/);
@@ -369,6 +369,30 @@ describe("Concordium registration surface", () => {
     expect(html).toContain("@concordium/browser-wallet-api-helpers@3.3.0");
     expect(html).toContain("@concordium/web-sdk@12.0.2");
     expect(html).not.toMatch(/[–—]/);
+  });
+});
+
+describe("Concordium agent checks cannot be used to spend the database", () => {
+  const rpc = async () => null;
+  it("writes nothing for a wallet that never paid here, and limits checks per visitor", async () => {
+    const ccd = await build(true, true, undefined, { agents: { rpc } });
+    const stranger = "3Hm1aYSzPUqRmAqvkmGTEnhVw6W4ZbWJ5NoQ4Rg4fBsN";
+    const before = (await db.first<{ n: number }>("SELECT count(*) AS n FROM agent_checks"))!.n;
+    const r = await ccd.fetch(new Request(`https://api.afriradar.com/v1/agents/${stranger}`, { headers: { "cf-connecting-ip": "10.0.0.9" } }));
+    expect(r.status).toBe(200);
+    expect((await db.first<{ n: number }>("SELECT count(*) AS n FROM agent_checks"))!.n).toBe(before);
+    await db.run("INSERT INTO kv (ns, k, v, updated_at) VALUES ('agent-check', ?, ?, ?) ON CONFLICT (ns, k) DO UPDATE SET v = excluded.v", `ip:10.0.0.9:${hourOf(NOW)}`, String(AGENT_CHECKS_PER_HOUR), NOW.toISOString());
+    expect((await ccd.fetch(new Request(`https://api.afriradar.com/v1/agents/${stranger}`, { headers: { "cf-connecting-ip": "10.0.0.9" } }))).status).toBe(429);
+  });
+
+  it("a stranger naming a verified agent's wallet uses up only their own allowance, not the agent's", async () => {
+    const { mainnetAskCap } = await import("../src/concordium/access.js");
+    const verified = async () => ({ verified: true, agent: { badge: "BadgeX" } }) as never;
+    for (let i = 0; i < VERIFIED_AGENT_ASKS_PER_HOUR; i++) {
+      await mainnetAskCap({ db, now: NOW, ip: "6.6.6.6", claimed: "AgentWallet", check: verified, visitorCap: MAINNET_ASKS_PER_HOUR });
+    }
+    expect((await mainnetAskCap({ db, now: NOW, ip: "6.6.6.6", claimed: "AgentWallet", check: verified, visitorCap: MAINNET_ASKS_PER_HOUR })).ok).toBe(false);
+    expect((await mainnetAskCap({ db, now: NOW, ip: "7.7.7.7", claimed: "AgentWallet", check: verified, visitorCap: MAINNET_ASKS_PER_HOUR })).ok).toBe(true);
   });
 });
 
