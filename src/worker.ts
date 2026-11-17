@@ -55,6 +55,11 @@ async function build(env: Env): Promise<Built> {
     channelStorage: new D1ChannelStorage(db),
     pendingSettlementStore: new D1PendingStore(db),
     maxChannelLifetimeSecs: 3600,
+    // The buyer-built channel open may not cost more than its price covers (src/netfee.ts TX_FEE_CAP.upto):
+    // 2 signatures (10,000) + at most 400,000 units x 75,000 microlamports (30,000) = 40,000 lamports.
+    maxRequiredSignatures: 2,
+    maxComputeUnits: 400_000,
+    maxPriorityFeeMicroLamports: 75_000,
   });
   const facilitator = new x402Facilitator().register(networks, new ExactFacilitator(svm)).register(networks, upto);
   // In-process: the resource server calls the facilitator directly, no HTTP hop. On mainnet the

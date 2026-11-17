@@ -27,6 +27,19 @@ import { capProof } from "./proof.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
 import { networkFee, SOL_FALLBACK_USD, type FeeKind } from "./netfee.js";
 
+/**
+ * On mainnet a question that fails after its deposit still pays its own network fee (the channel was
+ * opened, settled and will be closed); everything else is refunded. On devnet it is refunded in full.
+ */
+export class MainnetUptoServer extends UptoServer {
+  override settleOnCancel(ctx: Parameters<UptoServer["settleOnCancel"]>[0]) {
+    const r = super.settleOnCancel(ctx);
+    if (!r) return r;
+    const fee = Math.max(0, Number(ctx.requirements.amount) - PRODUCTS.ask.price);
+    return { ...r, amount: String(fee) };
+  }
+}
+
 export type Deps = {
   db: Db;
   facilitator: FacilitatorClient;
@@ -92,6 +105,16 @@ export async function createApp(deps: Deps) {
   const solUsd = mainnet?.solUsd ?? (async () => SOL_FALLBACK_USD);
   const feeOn = async (network: string, scheme: FeeKind): Promise<number> => (network === MAINNET && mainnet ? networkFee(scheme, await solUsd()) : 0);
   const priceOn: Pricer = async (network, scheme, listMicro) => listMicro + (await feeOn(network, scheme));
+  // The SOL price is read per server instance, so a buyer can hold a quote one $10 step above what
+  // this instance now asks. Honor any mainnet quote between today's price and the highest fee we
+  // could ever ask (never below cost), so that buyer is not refused.
+  const mainnetPrice = (scheme: FeeKind, listMicro: number) => async (ctx: { paymentHeader?: string }) => {
+    const now = await priceOn(MAINNET, scheme, listMicro);
+    const offer = ctx.paymentHeader ? paidOffer(ctx.paymentHeader) : null;
+    const quoted = Number(offer?.amount);
+    const highest = listMicro + networkFee(scheme, Math.max(SOL_FALLBACK_USD, await solUsd()) * 1.5);
+    return usd(offer?.network === MAINNET && Number.isInteger(quoted) && quoted >= now && quoted <= highest ? quoted : now);
+  };
   const topup = deps.aurora ? topupService({ appKey: deps.aurora.appKey, fetch: deps.aurora.fetch, db, now, treasury: deps.treasury }) : undefined;
 
   const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null }) =>
@@ -148,7 +171,7 @@ export async function createApp(deps: Deps) {
   if (mainnet) {
     resourceServer
       .register(MAINNET as Network, new ExactServer())
-      .register(MAINNET as Network, new UptoServer({ receiverAuthorizerSigner: deps.authorizer, rpcUrl: mainnet.rpcUrl }));
+      .register(MAINNET as Network, new MainnetUptoServer({ receiverAuthorizerSigner: deps.authorizer, rpcUrl: mainnet.rpcUrl }));
   }
   resourceServer
     .onAfterSettle(async (ctx) => {
@@ -160,7 +183,7 @@ export async function createApp(deps: Deps) {
         network: ctx.requirements.network,
         route: pathOf(ctx.paymentPayload.resource?.url),
         scheme: ctx.requirements.scheme,
-        amount: status === "deposit" ? String(ctx.requirements.amount) : status === "refunded" ? "0" : (r.amount ?? String(ctx.requirements.amount)),
+        amount: status === "deposit" ? String(ctx.requirements.amount) : status === "refunded" ? (r.amount ?? "0") : (r.amount ?? String(ctx.requirements.amount)),
         ceiling: ctx.requirements.scheme === "upto" ? String(ctx.requirements.amount) : null,
         payer: r.payer ?? null,
         status,
@@ -202,7 +225,7 @@ export async function createApp(deps: Deps) {
         accepts: chains.map((ch) => ({
           scheme: p.scheme,
           // Mainnet: the list price plus the buyer's network fee, read when the 402 is built.
-          price: ch.id === "mainnet" ? async () => usd(await priceOn(ch.network, p.scheme, p.price)) : usd(p.price),
+          price: ch.id === "mainnet" ? mainnetPrice(p.scheme, p.price) : usd(p.price),
           network: ch.network as Network,
           payTo: deps.treasury,
           // The upto client stamps validAfter with the buyer's own clock unless we send one, and the
@@ -253,7 +276,7 @@ export async function createApp(deps: Deps) {
         summary: p.summary, example: p.example,
       })),
       ...(fees ? { networkFee: "On mainnet each price includes the Solana network fee of that payment, in USDC at the live SOL price, so you need no SOL and AfriRadar pays no fee for you. Devnet has no fee." } : {}),
-      failedPayments: "A request that errors is never charged. If a settlement is broadcast but unconfirmed, the server checks the chain before replying; anything still unresolved can be redeemed at /v1/redeem/:tx.",
+      failedPayments: "A request that errors is never charged for its data. On mainnet a question that fails after its deposit still pays its own network fee; the rest of the deposit is refunded. If a settlement is broadcast but unconfirmed, the server checks the chain before replying; anything still unresolved can be redeemed at /v1/redeem/:tx.",
     });
   });
   app.get("/v1/overview", async (c) => c.json({ ...(await q.overview(db)), kenya: await kenya.kenyaOverview(db) }));

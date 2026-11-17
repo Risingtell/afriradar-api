@@ -8,7 +8,7 @@
 - Fixed-price data uses x402 `exact`: sign one USDC transfer and repeat the request with a PAYMENT-SIGNATURE header. The data comes back with the Solana transaction in PAYMENT-RESPONSE.
 - The analyst (POST /v1/ask) uses x402 `upto`: deposit a $0.05 ceiling into a Solana Foundation payment channel; you are charged only the itemized bill and the rest is refunded in the same transaction.
 - AfriRadar runs its own facilitator, so a buyer needs USDC on mainnet or devnet and no SOL. On mainnet each price includes the buyer's own Solana network fee, in USDC (GET /v1 lists it); AfriRadar never pays a customer's fee.
-- A request that fails is never charged.
+- A request that fails is never charged, except that on mainnet a question that fails after its deposit keeps its own network fee and refunds the rest.
 - Any x402 client works, for example `@x402/fetch` with `@x402/svm`. The `afriradar` npm package wraps it: `npx afriradar --help`.
 
 ## Free endpoints

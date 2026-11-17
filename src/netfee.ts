@@ -60,11 +60,16 @@ export function decodePriceUpdate(data: Uint8Array): { feedId: string; price: nu
 
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;
 
-/** Reads SOL/USD from Pyth on mainnet, at most every 10 minutes; keeps the last good price if a read fails. */
+/**
+ * Reads SOL/USD from Pyth on mainnet, at most every 10 minutes. If a read fails it uses the last good
+ * price while that is under an hour old, otherwise a high price (never one that would undercharge),
+ * and waits a minute before trying again.
+ */
 export function solUsdReader(rpc: Rpc, opts: { now?: () => number; maxAgeMs?: number } = {}): () => Promise<number> {
   const now = opts.now ?? Date.now;
   const maxAge = opts.maxAgeMs ?? 10 * 60_000;
   let last: { at: number; usd: number } | undefined;
+  let failed: { at: number; usd: number } | undefined;
   let inflight: Promise<number> | undefined;
   const read = async (): Promise<number> => {
     const account = await pythFeedAddress(PYTH_SOL_USD);
@@ -78,11 +83,14 @@ export function solUsdReader(rpc: Rpc, opts: { now?: () => number; maxAgeMs?: nu
   };
   return async () => {
     if (last && now() - last.at < maxAge) return last.usd;
+    if (failed && now() - failed.at < 60_000) return failed.usd;
     inflight ??= read()
-      .then((usd) => ((last = { at: now(), usd }), usd))
+      .then((usd) => ((last = { at: now(), usd }), (failed = undefined), usd))
       .catch((e) => {
         console.error("SOL price read failed", e);
-        return last?.usd ?? SOL_FALLBACK_USD;
+        const usd = last && now() - last.at < 3_600_000 ? last.usd : Math.max(SOL_FALLBACK_USD, (last?.usd ?? 0) * 1.5);
+        failed = { at: now(), usd };
+        return usd;
       })
       .finally(() => (inflight = undefined));
     return inflight;
@@ -130,8 +138,11 @@ export function transactionFee(wireBase64: string): number {
 export function feeGuard(inner: FacilitatorClient, mainnet: string): FacilitatorClient {
   const check = (payload: PaymentPayload, req: PaymentRequirements): string | null => {
     if (req.network !== mainnet) return null;
-    const tx = (payload.payload as { transaction?: unknown } | undefined)?.transaction;
-    if (typeof tx !== "string") return null; // no buyer-built transaction (an upto voucher): nothing for us to sign
+    // exact carries `transaction`; an upto deposit carries the channel open as `openTransaction`.
+    const p = (payload.payload ?? {}) as { transaction?: unknown; openTransaction?: unknown };
+    const tx = p.transaction ?? p.openTransaction;
+    if (tx === undefined) return null; // no buyer-built transaction in this payload: nothing for us to sign
+    if (typeof tx !== "string") return "transaction could not be read";
     const kind: FeeKind = req.scheme === "upto" ? "upto" : "exact";
     let fee: number;
     try {

@@ -46,7 +46,7 @@ In the SDK, pass `network: "mainnet"` to `createAfriRadar`.
 | `ask "<q>"` | `POST /v1/ask` | metered, at most 0.05 |
 | `catalog`, `search`, `overview` | `GET /v1`, `/v1/search`, `/v1/overview` | free |
 
-A request that fails (unknown fund, bad input, AI unavailable) is never charged.
+A request that fails (unknown fund, bad input, AI unavailable) is never charged, except that on mainnet a question that fails after its deposit keeps its own network fee (about $0.005) and refunds the rest.
 
 ## SDK
 

@@ -7,7 +7,8 @@ import {
 } from "@solana/kit";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import { MAINNET, NETWORK } from "../src/catalog.js";
+import { MAINNET, NETWORK, PRODUCTS } from "../src/catalog.js";
+import { MainnetUptoServer } from "../src/app.js";
 import { feeGuard, FEE_LAMPORTS, networkFee, SOL_FALLBACK_USD, solUsdReader, transactionFee, TX_FEE_CAP } from "../src/netfee.js";
 
 const COMPUTE_BUDGET = address("ComputeBudget111111111111111111111111111111");
@@ -72,13 +73,28 @@ describe("the network fee on mainnet", () => {
     expect((await guarded.verify(pay(fair), req(MAINNET))).isValid).toBe(true);
     // Devnet moves test money only, so it is not checked.
     expect((await guarded.verify(pay(greedy), req(NETWORK))).isValid).toBe(true);
-    // An upto voucher carries no transaction for us to sign.
+    // A question's deposit carries its channel open as `openTransaction`: checked against the upto cap.
+    const open = (tx: string) => ({ payload: { channelId: "c", openTransaction: tx } }) as unknown as PaymentPayload;
+    expect((await guarded.verify(open(greedy), req(MAINNET, "upto"))).isValid).toBe(false);
+    expect((await guarded.settle(open(greedy), req(MAINNET, "upto"))).success).toBe(false);
+    expect((await guarded.verify(open(fair), req(MAINNET, "upto"))).isValid).toBe(true);
+    // A payload with no buyer-built transaction gives us nothing to sign.
     expect((await guarded.verify({ payload: { voucher: {} } } as unknown as PaymentPayload, req(MAINNET, "upto"))).isValid).toBe(true);
     expect(TX_FEE_CAP.exact).toBe(FEE_LAMPORTS.exact);
   });
 
   it("keeps the last good SOL price when a read fails, and overcharges rather than subsidizes with none", async () => {
-    const failing = solUsdReader(async () => { throw new Error("rpc down"); });
+    let calls = 0;
+    const failing = solUsdReader(async () => ((calls++), Promise.reject(new Error("rpc down"))));
     expect(await failing()).toBe(SOL_FALLBACK_USD);
+    expect(await failing()).toBe(SOL_FALLBACK_USD);
+    expect(calls).toBe(1); // a failed read is not retried for a minute
+  });
+
+  it("a mainnet question that fails after its deposit keeps only its network fee", () => {
+    const server = new MainnetUptoServer({});
+    const requirements = { scheme: "upto", network: MAINNET, amount: String(PRODUCTS.ask.price + 5_000) } as unknown as PaymentRequirements;
+    const cancel = server.settleOnCancel({ reason: "handler_failed", requirements } as never);
+    expect(cancel?.amount).toBe("5000");
   });
 });
