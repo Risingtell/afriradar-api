@@ -12,7 +12,7 @@ npx afriradar search coronation            # free: find fund ids
 npx afriradar wallet --new                 # creates ~/.afriradar/wallet.json, prints its address
 ```
 
-Send free devnet USDC to that address at [faucet.circle.com](https://faucet.circle.com) (choose Solana Devnet). You need no SOL: the API's facilitator pays the network fee.
+Send free devnet USDC to that address at [faucet.circle.com](https://faucet.circle.com) (choose Solana Devnet). You need no SOL: on devnet the API's facilitator pays the test network fee.
 
 ```bash
 npx afriradar top money-market --limit 5   # $0.002
@@ -23,7 +23,7 @@ npx afriradar ask "Which dollar fund has the highest yield this year, and who ma
 
 ## Real USDC on mainnet
 
-Add `--mainnet` to any command. The same wallet file pays; put a few cents of USDC on Solana in it. You still need no SOL.
+Add `--mainnet` to any command. The same wallet file pays; put a few cents of USDC on Solana in it. You still need no SOL: the mainnet price includes your network fee, paid in USDC.
 
 ```bash
 npx afriradar wallet --mainnet             # the wallet's mainnet USDC balance

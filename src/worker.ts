@@ -18,6 +18,7 @@ import { ingestKenya } from "./data/kenya.js";
 import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
 import { kindsAt, runMonitor } from "./monitor.js";
 import { jsonRpc } from "./reconcile.js";
+import { feeGuard, solUsdReader } from "./netfee.js";
 
 export type Env = {
   DB: Parameters<typeof d1>[0];
@@ -56,12 +57,13 @@ async function build(env: Env): Promise<Built> {
     maxChannelLifetimeSecs: 3600,
   });
   const facilitator = new x402Facilitator().register(networks, new ExactFacilitator(svm)).register(networks, upto);
-  // In-process: the resource server calls the facilitator directly, no HTTP hop.
-  const client: FacilitatorClient = {
+  // In-process: the resource server calls the facilitator directly, no HTTP hop. On mainnet the
+  // guard refuses, before we sign, any payment whose transaction costs more in fees than its price covers.
+  const client: FacilitatorClient = feeGuard({
     verify: (p, r) => facilitator.verify(p, r),
     settle: (p, r) => facilitator.settle(p, r),
     getSupported: async () => facilitator.getSupported() as SupportedResponse,
-  };
+  }, MAINNET);
   const demoSigner = env.DEMO_BUYER_KEY ? await signerFrom(env.DEMO_BUYER_KEY) : undefined;
   const app = await createApp({
     db,
@@ -71,7 +73,9 @@ async function build(env: Env): Promise<Built> {
     authorizer,
     rpcUrl: env.RPC_URL,
     readChain: chainReader(jsonRpc(env.RPC_URL), env.TREASURY),
-    mainnet: env.MAINNET_RPC_URL ? { rpcUrl: env.MAINNET_RPC_URL, readChain: chainReader(jsonRpc(env.MAINNET_RPC_URL), env.TREASURY, USDC_MAINNET) } : undefined,
+    mainnet: env.MAINNET_RPC_URL
+      ? { rpcUrl: env.MAINNET_RPC_URL, readChain: chainReader(jsonRpc(env.MAINNET_RPC_URL), env.TREASURY, USDC_MAINNET), solUsd: solUsdReader(jsonRpc(env.MAINNET_RPC_URL)) }
+      : undefined,
     demoSigner,
     feePayer,
     aurora: env.AURORA_APP_KEY ? { appKey: env.AURORA_APP_KEY } : undefined,

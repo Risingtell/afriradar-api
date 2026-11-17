@@ -40,7 +40,7 @@ async function build(withDemo = true, withMainnet = false, siteWeek?: () => Prom
     authorizer: await generateKeyPairSigner(),
     rpcUrl: RPC,
     readChain: async () => { throw new Error("no chain in these tests"); },
-    mainnet: withMainnet ? { rpcUrl: RPC, readChain: async () => { throw new Error("no chain in these tests"); } } : undefined,
+    mainnet: withMainnet ? { rpcUrl: RPC, readChain: async () => { throw new Error("no chain in these tests"); }, solUsd: async () => 72.4 } : undefined,
     now: () => NOW,
     demoSigner: withDemo ? demo : undefined,
     feePayer: withDemo ? feePayer : undefined,
@@ -223,8 +223,21 @@ describe("mainnet", () => {
       const accepts = required(r.res).accepts as { network: string; asset: string; amount: string; payTo: string }[];
       // Default x402 clients pay the first option they support, so "any Solana network" means devnet.
       expect(accepts.map((a) => [a.network, a.asset])).toEqual([[NETWORK, USDC_DEVNET], [MAINNET, USDC_MAINNET]]);
-      expect(new Set(accepts.map((a) => `${a.amount} ${a.payTo}`)).size).toBe(1);
+      expect(new Set(accepts.map((a) => a.payTo)).size).toBe(1);
     }
+  });
+
+  it("charges mainnet buyers their own network fee on top of the list price, never us", async () => {
+    // SOL at $72.40: a data request's fee is $0.0016, a question's $0.005 (src/netfee.ts).
+    const fund = required((await get(PRODUCTS.fund.example)).res).accepts as { network: string; amount: string }[];
+    expect(fund.map((a) => [a.network, a.amount])).toEqual([[NETWORK, String(PRODUCTS.fund.price)], [MAINNET, String(PRODUCTS.fund.price + 1_600)]]);
+    const question = required((await ask("What is the best fund?")).res).accepts as { network: string; amount: string }[];
+    expect(question.map((a) => a.amount)).toEqual([String(PRODUCTS.ask.price), String(PRODUCTS.ask.price + 5_000)]);
+    const fundProduct = (await get("/v1")).body.products.find((p: { id: string }) => p.id === "fund");
+    expect(fundProduct.mainnet).toEqual({ price: "$0.0026", priceMicroUsdc: 2_600, networkFee: "$0.0016" });
+    const tool = await get("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "afriradar_fund", arguments: { id: "money-market/aiico-money-market-fund" } } }) });
+    const toolAccepts = tool.body.result.structuredContent.accepts as { network: string; amount: string }[];
+    expect(toolAccepts.map((a) => [a.network, a.amount])).toEqual([[NETWORK, String(PRODUCTS.fund.price)], [MAINNET, String(PRODUCTS.fund.price + 1_600)]]);
   });
 
   it("sells on devnet only without a mainnet RPC", async () => {

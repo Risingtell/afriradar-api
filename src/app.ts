@@ -25,6 +25,7 @@ import { mcpTools, mountMcp } from "./mcp.js";
 import { monitorStatus } from "./monitor.js";
 import { capProof } from "./proof.js";
 import { readPayment, type ChainPayment } from "./reconcile.js";
+import { networkFee, SOL_FALLBACK_USD, type FeeKind } from "./netfee.js";
 
 export type Deps = {
   db: Db;
@@ -36,7 +37,12 @@ export type Deps = {
   /** Looks a settlement up on chain. Injected so tests never touch the network. */
   readChain: (signature: string) => Promise<ChainPayment>;
   /** Solana mainnet, real USDC. Without it the API sells on devnet only. */
-  mainnet?: { rpcUrl: string; readChain: (signature: string) => Promise<ChainPayment> };
+  mainnet?: {
+    rpcUrl: string;
+    readChain: (signature: string) => Promise<ChainPayment>;
+    /** SOL in US dollars, for the network fee every mainnet price includes (src/netfee.ts). */
+    solUsd?: () => Promise<number>;
+  };
   explorer?: (sig: string, network?: string | null) => string;
   now?: () => Date;
   /** Funded devnet wallet behind the no-wallet demo. Its payments are labelled demo in the ledger. */
@@ -51,15 +57,19 @@ export type Deps = {
 
 export const MAINNET_ASKS_PER_HOUR = 30;
 
-/** The network a payment header pays on; null when unreadable (the payment middleware then refuses it). */
-const paidNetwork = (header: string): string | null => {
+/** What a payment header accepted; null when unreadable (the payment middleware then refuses it). */
+const paidOffer = (header: string): { network: string | null; amount: string | null } | null => {
   try {
-    const p = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(header), (ch) => ch.charCodeAt(0)))) as { accepted?: { network?: string }; network?: string };
-    return p.accepted?.network ?? p.network ?? null;
+    const p = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(header), (ch) => ch.charCodeAt(0)))) as { accepted?: { network?: string; amount?: string }; network?: string };
+    return { network: p.accepted?.network ?? p.network ?? null, amount: p.accepted?.amount ?? null };
   } catch {
     return null;
   }
 };
+const paidNetwork = (header: string): string | null => paidOffer(header)?.network ?? null;
+
+/** A price list for one network: the list price, plus on mainnet the buyer's own network fee. */
+export type Pricer = (network: string, scheme: FeeKind, listMicro: number) => Promise<number>;
 
 const pathOf = (url: string | undefined) => {
   try {
@@ -77,6 +87,11 @@ export async function createApp(deps: Deps) {
   const mainnet = deps.mainnet;
   const chains = mainnet ? [CHAINS.devnet, CHAINS.mainnet] : [CHAINS.devnet];
   const readChainOn = (network: string | null | undefined) => (network === MAINNET && mainnet ? mainnet.readChain : deps.readChain);
+  // AfriRadar never pays a customer's network fee on mainnet: each mainnet price includes the fee
+  // of the transactions that payment causes, in USDC at the live SOL price. Devnet has no fee.
+  const solUsd = mainnet?.solUsd ?? (async () => SOL_FALLBACK_USD);
+  const feeOn = async (network: string, scheme: FeeKind): Promise<number> => (network === MAINNET && mainnet ? networkFee(scheme, await solUsd()) : 0);
+  const priceOn: Pricer = async (network, scheme, listMicro) => listMicro + (await feeOn(network, scheme));
   const topup = deps.aurora ? topupService({ appKey: deps.aurora.appKey, fetch: deps.aurora.fetch, db, now, treasury: deps.treasury }) : undefined;
 
   const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null }) =>
@@ -186,7 +201,8 @@ export async function createApp(deps: Deps) {
         // buyer that asks for mainnet pays real USDC.
         accepts: chains.map((ch) => ({
           scheme: p.scheme,
-          price: usd(p.price),
+          // Mainnet: the list price plus the buyer's network fee, read when the 402 is built.
+          price: ch.id === "mainnet" ? async () => usd(await priceOn(ch.network, p.scheme, p.price)) : usd(p.price),
           network: ch.network as Network,
           payTo: deps.treasury,
           // The upto client stamps validAfter with the buyer's own clock unless we send one, and the
@@ -214,6 +230,7 @@ export async function createApp(deps: Deps) {
   app.get("/health", (c) => c.json({ ok: true }));
   app.get("/v1", async (c) => {
     const week = await q.latestWeek(db);
+    const fees = mainnet ? { exact: await feeOn(MAINNET, "exact"), upto: await feeOn(MAINNET, "upto") } : null;
     return c.json({
       name: "AfriRadar Data API",
       about: "African fund data from the regulators, sold per request over x402 on Solana: SEC Nigeria's weekly NAV report for every collective investment scheme, and CMA Kenya's quarterly assets for every unit trust scheme.",
@@ -230,7 +247,12 @@ export async function createApp(deps: Deps) {
       free: ["GET /v1", "GET /v1/overview", "GET /v1/search?q=", "GET /v1/payments", "GET /v1/status", "GET /v1/proof/cap", "GET /v1/redeem/:tx", "GET /discovery/resources", "POST /mcp", ...(topup ? TOPUP_ROUTES : [])],
       mcp: "https://api.afriradar.com/mcp: the same data as MCP tools, paid tools charged over x402 inside MCP.",
       ...(topup ? { topup: "No USDC on Solana? GET /v1/topup: send USDT or USDC from BNB Chain, Tron, Base, Arbitrum or Polygon, and Aurora Intents delivers USDC to your Solana wallet." } : {}),
-      products: Object.entries(PRODUCTS).map(([id, p]) => ({ id, method: p.method, path: p.path, scheme: p.scheme, price: usd(p.price), priceMicroUsdc: p.price, summary: p.summary, example: p.example })),
+      products: Object.entries(PRODUCTS).map(([id, p]) => ({
+        id, method: p.method, path: p.path, scheme: p.scheme, price: usd(p.price), priceMicroUsdc: p.price,
+        ...(fees ? { mainnet: { price: usd(p.price + fees[p.scheme]), priceMicroUsdc: p.price + fees[p.scheme], networkFee: usd(fees[p.scheme]) } } : {}),
+        summary: p.summary, example: p.example,
+      })),
+      ...(fees ? { networkFee: "On mainnet each price includes the Solana network fee of that payment, in USDC at the live SOL price, so you need no SOL and AfriRadar pays no fee for you. Devnet has no fee." } : {}),
       failedPayments: "A request that errors is never charged. If a settlement is broadcast but unconfirmed, the server checks the chain before replying; anything still unresolved can be redeemed at /v1/redeem/:tx.",
     });
   });
@@ -304,10 +326,10 @@ export async function createApp(deps: Deps) {
   if (mainnet) app.post("/rpc/mainnet", relay(mainnet.rpcUrl));
 
   // A question's deposit goes into a payment channel before the analyst runs, and a refused question
-  // is refunded with the facilitator paying both network fees. So a paid request with a bad question
+  // would be refunded at the cost of two network fees. So a paid request with a bad question
   // is turned away before any channel opens; an unpaid one still gets its 402 price. Mainnet questions
   // are also capped per visitor, because each open channel holds some of the facilitator's SOL as
-  // rent until the hourly cleanup returns it.
+  // rent until the hourly cleanup returns it (the rent comes back; the fees are in the buyer's price).
   app.post(PRODUCTS.ask.path, async (c, next) => {
     const paid = c.req.header("PAYMENT-SIGNATURE") ?? c.req.header("X-PAYMENT");
     if (!paid) return next();
@@ -325,8 +347,8 @@ export async function createApp(deps: Deps) {
   if (deps.demoSigner && deps.feePayer) mountFaucet(app, { db, source: deps.demoSigner, feePayer: deps.feePayer, rpcUrl: deps.rpcUrl, explorer, now });
   if (topup) mountTopup(app, { service: topup });
   const networks = chains.map((ch) => ch.network as Network);
-  mountMcp(app, { db, resourceServer, treasury: deps.treasury, networks, status, topup });
-  mountDiscovery(app, { resourceServer, treasury: deps.treasury, networks, tools: mcpTools(db, { status, networks, topup }), now });
+  mountMcp(app, { db, resourceServer, treasury: deps.treasury, networks, status, topup, priceOn });
+  mountDiscovery(app, { resourceServer, treasury: deps.treasury, networks, tools: mcpTools(db, { status, networks, topup }), now, priceOn });
 
   // ---------- paid ----------
   app.use(paymentMiddleware(routes, resourceServer));
@@ -372,13 +394,19 @@ export async function createApp(deps: Deps) {
   app.post(PRODUCTS.ask.path, async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { question?: unknown };
     const result = await ask(db, deps.llm, String(body.question ?? ""), { ceiling: PRODUCTS.ask.price });
-    setSettlementOverrides(c, { amount: String(result.bill.total) });
+    // On mainnet the buyer authorized the list ceiling plus the network fee; the fee is charged on
+    // top of what the question used, never more than was authorized.
+    const offer = paidOffer(c.req.header("PAYMENT-SIGNATURE") ?? c.req.header("X-PAYMENT") ?? "");
+    const authorized = Number(offer?.amount ?? PRODUCTS.ask.price);
+    const fee = offer?.network === MAINNET ? Math.max(0, authorized - PRODUCTS.ask.price) : 0;
+    const charged = Math.min(result.bill.total + fee, authorized);
+    setSettlementOverrides(c, { amount: String(charged) });
     const usedKenya = result.bill.data.some((d) => d.tool.startsWith("kenya_"));
     return c.json({
       answer: result.answer,
       week: result.week,
       ...(usedKenya ? { kenyaQuarter: await kenya.latestQuarter(db) } : {}),
-      bill: { ...result.bill, totalUsdc: result.bill.total / 1e6, ceilingUsdc: result.bill.ceiling / 1e6 },
+      bill: { ...result.bill, totalUsdc: result.bill.total / 1e6, ceilingUsdc: result.bill.ceiling / 1e6, ...(fee ? { networkFee: fee, charged, networkFeeUsdc: fee / 1e6, chargedUsdc: charged / 1e6 } : {}) },
       source: usedKenya
         ? "SEC Nigeria weekly valuation reports and CMA Kenya quarterly statistical bulletins, via afriradar.com"
         : "SEC Nigeria weekly valuation reports of collective investment schemes, via afriradar.com",

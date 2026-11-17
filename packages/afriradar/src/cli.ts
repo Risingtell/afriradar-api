@@ -72,7 +72,7 @@ async function main() {
     const toks = await rpc.getTokenAccountsByOwner(signer.address, { mint: address(network === "mainnet" ? USDC_MAINNET : USDC_DEVNET) }, { encoding: "jsonParsed" }).send();
     const usdc = toks.value.reduce((a, t) => a + Number((t.account.data as { parsed: { info: { tokenAmount: { uiAmount: number } } } }).parsed.info.tokenAmount.uiAmount), 0);
     return out(
-      `network ${network}\naddress ${signer.address}\nSOL     ${sol}\nUSDC    ${usdc}\n${usdc === 0 && network === "devnet" ? "Get free devnet USDC at https://faucet.circle.com (choose Solana Devnet). You need no SOL: the server pays network fees." : ""}`,
+      `network ${network}\naddress ${signer.address}\nSOL     ${sol}\nUSDC    ${usdc}\n${usdc === 0 && network === "devnet" ? "Get free devnet USDC at https://faucet.circle.com (choose Solana Devnet). You need no SOL: on devnet the server pays the test network fee." : ""}`,
       { network, address: signer.address, sol, usdc },
     );
   }

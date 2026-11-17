@@ -52,7 +52,7 @@ GET /v1/kenya/unit-trusts
 <- 200 with the data, PAYMENT-RESPONSE header: { success, transaction, payer }
 ```
 
-The facilitator runs inside the same Cloudflare Worker as the API and pays the network fee, so a buyer needs USDC (real on mainnet, test on devnet) and no SOL.
+The facilitator runs inside the same Cloudflare Worker as the API, so a buyer needs USDC (real on mainnet, test on devnet) and no SOL. On mainnet the buyer still pays its own network fee: every mainnet price includes the Solana fee of that payment, in USDC at the live SOL price (Pyth), and the facilitator refuses any payment whose transaction would cost more in fees than its price covers. AfriRadar never pays a customer's fee. On devnet, which moves only test money, the facilitator pays the test fee.
 
 ## Products
 
@@ -138,7 +138,7 @@ See [`src/fund.ts`](src/fund.ts), [`web/fund.ts`](web/fund.ts) and [`test/fund.t
 The same Worker sells on both networks. Every 402 lists devnet first and mainnet second, so an x402 client picks the network its wallet is on. Each payment is stored with its network, and the ledger reads `?network=devnet|mainnet|all` (devnet by default).
 
 - **Real money stays deliberate.** The demo wallet and the hourly monitor pay on devnet only. On mainnet you always pay from your own wallet.
-- **One facilitator, two chains.** The facilitator pays network fees on both; it reaches mainnet through its own RPC, and the page signs through `/rpc/mainnet`.
+- **One facilitator, two chains.** It reaches mainnet through its own RPC, and the page signs through `/rpc/mainnet`. On mainnet the buyer's price covers the network fee (about $0.002 for a data request, $0.005 for a question at today's SOL price; `GET /v1` lists each product's mainnet price and fee).
 - **Guard before payment.** A question is validated before its deposit is taken, and mainnet questions are limited per visitor per hour, so a bad request is refused without charge.
 - **Recount it.** On the [demo page](https://api.afriradar.com/#ledger), choose **Mainnet** next to the recount buttons: your browser reads every mainnet payment from Solana and compares it with the ledger.
 
@@ -163,7 +163,7 @@ OK: every payment the API claims is on chain.
 
 ## Try it
 
-**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. To pay real USDC, set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). You still need no SOL.
+**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. To pay real USDC, set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). You still need no SOL: the mainnet price includes the network fee, paid in USDC.
 
 **From a terminal** (Node 22 or later), with the [`afriradar`](https://www.npmjs.com/package/afriradar) package on npm:
 
@@ -176,7 +176,7 @@ npx afriradar ask "Which Kenyan unit trust schemes grew fastest last quarter?"
 npx afriradar verify --mainnet             # free: recount the real-USDC payments from Solana
 ```
 
-Add `--mainnet` to any command to pay real USDC from the same wallet file. You still need no SOL.
+Add `--mainnet` to any command to pay real USDC from the same wallet file. You still need no SOL: the mainnet price includes the network fee, paid in USDC.
 
 The same package is an SDK (`createAfriRadar`) and an MCP server (`afriradar mcp`) so any MCP-capable agent can buy data with its own wallet and a budget. See [packages/afriradar](packages/afriradar).
 

@@ -9,6 +9,7 @@ import type { Network } from "@x402/core/types";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { createPaymentWrapper } from "@x402/mcp";
 import { NETWORK, PRODUCTS, usd } from "./catalog.js";
+import type { Pricer } from "./app.js";
 import type { Db } from "./db.js";
 import { CATEGORIES, isCategory } from "./data/model.js";
 import * as kenya from "./data/kenya.js";
@@ -190,7 +191,8 @@ const asResult = (data: unknown): ToolResult => ({
 const errorResult = (message: string, data?: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text: message }], ...(data ? { structuredContent: data } : {}), isError: true });
 
 /** `networks`: where paid tools accept payment, devnet first. */
-export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402ResourceServer; treasury: string; networks: Network[]; status: () => Promise<unknown>; topup?: TopupService }) {
+export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402ResourceServer; treasury: string; networks: Network[]; status: () => Promise<unknown>; topup?: TopupService; priceOn?: Pricer }) {
+  const priceOn: Pricer = opts.priceOn ?? (async (_n, _s, list) => list);
   const tools = mcpTools(opts.db, { status: opts.status, networks: opts.networks, topup: opts.topup });
   const byName = new Map(tools.map((t) => [t.name, t]));
 
@@ -202,13 +204,23 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
       throw e;
     }
   };
-  // Paid handlers are built once, on first use, after the resource server has its facilitator's kinds.
+  // Paid handlers are built on first use, after the resource server has its facilitator's kinds, and
+  // rebuilt when the mainnet network fee moves (it follows the SOL price in steps).
   let paidHandlers: Promise<Map<string, (args: Args, extra: { _meta?: Record<string, unknown> }) => Promise<ToolResult>>> | undefined;
-  const paid = () =>
+  let builtFor = "";
+  const paid = async () => {
+    const key = (await Promise.all(opts.networks.map((n) => priceOn(n, "exact", 0)))).join(",");
+    if (key !== builtFor) {
+      paidHandlers = undefined;
+      builtFor = key;
+    }
+    return build();
+  };
+  const build = () =>
     (paidHandlers ??= (async () => {
       const out = new Map<string, (args: Args, extra: { _meta?: Record<string, unknown> }) => Promise<ToolResult>>();
       for (const t of tools.filter((x) => x.price)) {
-        const accepts = (await Promise.all(opts.networks.map((network) => opts.resourceServer.buildPaymentRequirements({ scheme: "exact", network, payTo: opts.treasury, price: usd(t.price as number) })))).flat();
+        const accepts = (await Promise.all(opts.networks.map(async (network) => opts.resourceServer.buildPaymentRequirements({ scheme: "exact", network, payTo: opts.treasury, price: usd(await priceOn(network, "exact", t.price as number)) })))).flat();
         const wrap = createPaymentWrapper(opts.resourceServer, {
           accepts,
           resource: { url: `mcp://tool/${t.name}`, description: t.description, mimeType: "application/json" },
