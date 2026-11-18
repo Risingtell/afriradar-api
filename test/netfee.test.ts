@@ -9,7 +9,7 @@ import type { FacilitatorClient } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { MAINNET, NETWORK, PRODUCTS } from "../src/catalog.js";
 import { MainnetUptoServer } from "../src/app.js";
-import { feeGuard, FEE_LAMPORTS, networkFee, SOL_FALLBACK_USD, solUsdReader, transactionFee, TX_FEE_CAP } from "../src/netfee.js";
+import { feeGuard, FEE_LAMPORTS, networkFee, SOL_FALLBACK_USD, solUsdReader, transactionFee, TX_FEE_CAP, UPTO_OPEN_LIMITS } from "../src/netfee.js";
 
 const COMPUTE_BUDGET = address("ComputeBudget111111111111111111111111111111");
 const MEMO = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -51,6 +51,17 @@ describe("the network fee on mainnet", () => {
     // No limit instruction: Solana allows 200,000 units per other instruction.
     expect(transactionFee(await wire([priceIx(10n)]))).toBe(5_000 + 2);
     expect(transactionFee(await wire([]))).toBe(5_000);
+  });
+
+  it("admits a question deposit as Phantom builds it: 240,000 units at 100,000 microlamports", async () => {
+    // Measured on our mainnet deposits of 22 Oct and 8 Nov 2026. The real open also carries the fee
+    // payer's signature: +5,000, for 34,000 lamports in all.
+    const fee = transactionFee(await wire([limitIx(240_000), priceIx(100_000n)])) + 5_000;
+    expect(fee).toBe(34_000);
+    expect(fee).toBeLessThanOrEqual(TX_FEE_CAP.upto);
+    expect(240_000).toBeLessThanOrEqual(UPTO_OPEN_LIMITS.maxComputeUnits);
+    expect(100_000).toBeLessThanOrEqual(UPTO_OPEN_LIMITS.maxPriorityFeeMicroLamports);
+    expect(UPTO_OPEN_LIMITS.maxRequiredSignatures).toBe(2);
   });
 
   it("refuses, before we sign, a mainnet payment whose fee is above what its price covers", async () => {

@@ -15,6 +15,14 @@ import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 export const FEE_LAMPORTS = { exact: 20_000, upto: 62_000 } as const;
 /** The most the buyer-built transaction (the one we sign as fee payer) may cost in fees. */
 export const TX_FEE_CAP = { exact: FEE_LAMPORTS.exact, upto: 40_000 } as const;
+
+/**
+ * Shape limits for the buyer-built channel open of a question, given to the upto facilitator. feeGuard
+ * enforces the exact fee (TX_FEE_CAP.upto); these only bound each field, so they must admit what real
+ * wallets send. Phantom opens with 240,000 units at 100,000 microlamports, 2 signatures: 34,000 lamports
+ * (mainnet deposits of 22 Oct and 8 Nov 2026). A 75,000 price limit refused every Phantom question.
+ */
+export const UPTO_OPEN_LIMITS = { maxRequiredSignatures: 2, maxComputeUnits: 400_000, maxPriorityFeeMicroLamports: 125_000 } as const;
 export type FeeKind = keyof typeof FEE_LAMPORTS;
 
 /** SOL is priced in $10 steps, rounded up, so the fee changes rarely and never undercharges. */
