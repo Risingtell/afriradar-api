@@ -21,7 +21,7 @@ Paid (your wallet pays; each prints its Solana transaction)
   afriradar compare <id> <id> ...       up to 5 funds side by side           $0.003
   afriradar kenya                       Kenya: every unit trust scheme, latest quarter   $0.002
   afriradar kenya <scheme>              Kenya: one scheme, every quarter     $0.001
-  afriradar ask "<question>"            AI analyst, you pay for what it reads (max $0.05)
+  afriradar ask "<question>"            AI analyst, you pay for what it reads (max $0.05 + mainnet fee)
 
 Wallet
   afriradar wallet [--new]              show (or create) ${DEFAULT_WALLET}
@@ -144,8 +144,9 @@ async function main() {
     case "ask": {
       const r = await api.ask(rest.join(" "));
       const b = r.data.bill;
-      const lines = [`base $0.001`, ...b.data.map((d) => `${d.tool} $${d.price / 1e6}`), `AI tokens ${b.tokens.prompt + b.tokens.completion} $${b.tokens.price / 1e6}`];
-      return out(`${r.data.answer}\n\nbill: ${lines.join(" + ")} = $${b.total / 1e6} (ceiling $0.05, rest refunded)${receipt(r.receipt)}`, r);
+      const fee = b.networkFee ?? 0;
+      const lines = [`base $0.001`, ...b.data.map((d) => `${d.tool} $${d.price / 1e6}`), `AI tokens ${b.tokens.prompt + b.tokens.completion} $${b.tokens.price / 1e6}`, ...(fee ? [`network fee $${fee / 1e6}`] : [])];
+      return out(`${r.data.answer}\n\nbill: ${lines.join(" + ")} = $${(b.charged ?? b.total) / 1e6} (ceiling $${(50_000 + fee) / 1e6}, rest refunded)${receipt(r.receipt)}`, r);
     }
     default:
       console.error(`unknown command "${cmd}"\n\n${HELP}`);

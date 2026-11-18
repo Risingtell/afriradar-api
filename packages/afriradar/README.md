@@ -19,7 +19,7 @@ npx afriradar top money-market --limit 5   # $0.002
 npx afriradar ask "Which dollar fund has the highest yield this year, and who manages it?"
 ```
 
-`ask` authorizes at most $0.05 on chain and settles only the itemized bill (base fee, each dataset the analyst read, AI tokens). The rest of the deposit goes back to your wallet in the same settlement.
+`ask` authorizes at most $0.05 on chain (on mainnet, plus its network fee) and settles only the itemized bill (base fee, each dataset the analyst read, AI tokens, and on mainnet the network fee). The rest of the deposit goes back to your wallet in the same settlement.
 
 ## Real USDC on mainnet
 
@@ -62,7 +62,7 @@ const answer = await api.ask("Is Stanbic IBTC Money Market Fund above the median
 console.log(answer.data.answer, answer.data.bill);
 ```
 
-Any `@solana/kit` `TransactionSigner` works, so a browser wallet adapter can pay instead of a key file. `maxPerRequest` (default 0.05) and `budget` are enforced before anything is signed.
+Any `@solana/kit` `TransactionSigner` works, so a browser wallet adapter can pay instead of a key file. `maxPerRequest` (default 0.05 on devnet, 0.10 on mainnet where the network fee is added) and `budget` are enforced before anything is signed.
 
 ## MCP server for AI agents
 

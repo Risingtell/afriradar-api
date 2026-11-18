@@ -386,7 +386,9 @@ async function run() {
       const client = new x402Client()
         .register(NETS[n].caip2 as `${string}:${string}`, new ExactSvmScheme(own.signer, { rpcUrl }))
         .register(NETS[n].caip2 as `${string}:${string}`, new UptoSvmScheme(own.signer, { rpcUrl }))
-        .setSpendControls({ maxAmountPerPayment: "$0.05" });
+        // Devnet: the $0.05 question ceiling. Mainnet adds the buyer's network fee in USDC on top
+        // ($0.005 for a question today, more if SOL rises), so it needs headroom above $0.05.
+        .setSpendControls({ maxAmountPerPayment: n === "mainnet" ? "$0.10" : "$0.05" });
       let agreed: number | undefined;
       client.onAfterPaymentCreation(async ({ selectedRequirements }) => {
         agreed = Number(selectedRequirements.amount);

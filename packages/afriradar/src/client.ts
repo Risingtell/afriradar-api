@@ -64,7 +64,7 @@ export type AfriRadarOptions = {
   network?: Network;
   /** Used to build payment transactions. Defaults to the public RPC of `network`. */
   rpcUrl?: string;
-  /** Refuse any single payment above this (USDC). Default 0.05, the /v1/ask ceiling. */
+  /** Refuse any single payment above this (USDC). Default 0.05 on devnet (the /v1/ask ceiling); 0.10 on mainnet, where the network fee is added to the price. */
   maxPerRequest?: number;
   /** Refuse payments once this much (USDC) has been spent by this client. Default: no limit. */
   budget?: number;
@@ -76,7 +76,7 @@ export function createAfriRadar(opts: AfriRadarOptions) {
   const network = opts.network ?? "devnet";
   const rpcUrl = opts.rpcUrl ?? (network === "mainnet" ? MAINNET_RPC : DEVNET_RPC);
   const explorerTx = (sig: string) => `https://explorer.solana.com/tx/${sig}${network === "mainnet" ? "" : "?cluster=devnet"}`;
-  const maxPer = Math.round((opts.maxPerRequest ?? 0.05) * 1e6);
+  const maxPer = Math.round((opts.maxPerRequest ?? (network === "mainnet" ? 0.1 : 0.05)) * 1e6);
   const budget = opts.budget === undefined ? Infinity : Math.round(opts.budget * 1e6);
   let spent = 0;
 
@@ -151,9 +151,9 @@ export function createAfriRadar(opts: AfriRadarOptions) {
       if (!/^[a-z0-9-]+$/.test(id)) throw new AfriRadarError(`Kenya scheme id must look like "sanlam", got "${id}"`, 400);
       return paid<Record<string, unknown>>(`/v1/kenya/unit-trusts/${id}`);
     },
-    /** Metered: authorizes up to $0.05 on chain, settles only the itemized bill. */
+    /** Metered: authorizes up to $0.05 on chain (plus the network fee on mainnet), settles only the itemized bill. */
     ask: (question: string) =>
-      paid<{ answer: string; week: string; bill: { total: number; data: { tool: string; price: number }[]; tokens: { prompt: number; completion: number; price: number } } }>("/v1/ask", {
+      paid<{ answer: string; week: string; bill: { total: number; data: { tool: string; price: number }[]; tokens: { prompt: number; completion: number; price: number }; networkFee?: number; charged?: number } }>("/v1/ask", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question }),
