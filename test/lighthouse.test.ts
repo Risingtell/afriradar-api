@@ -1,8 +1,10 @@
-// Phantom wraps the payment instruction in Lighthouse guards and adds a compute-budget instruction.
-// scripts/patch-x402-svm.mjs makes @x402/svm 2.28 accept that layout, and nothing looser. These tests
-// pin the rules on both payment paths: data requests (exact) and question deposits (the upto open).
-// The Phantom layout is the one seen on mainnet on 20 Nov 2026 (e.g. transaction P2UUZAeV...):
-//   limit, price, guard(10, 17 B), guard(6, 52 B), SetLoadedAccountsDataSizeLimit, <payment>, memo, guard(6, 26 B), guard(10, 27 B)
+// Phantom wraps the payment instruction in Lighthouse guards, before and after it. scripts/patch-x402-svm.mjs
+// makes @x402/svm 2.28 accept that, and nothing looser. These tests pin the rules on both payment paths:
+// data requests (exact) and question deposits (the upto channel open). The guards are byte for byte the
+// ones in a real Phantom question deposit, captured from our Worker log on 20 Nov 2026:
+//   limit, price, guard(6) buyer, guard(6) fee payer, guard(6) buyer USDC, guard(6) channel USDC,
+//   guard(6) channel, open, memo, guard(6) buyer, guard(10) buyer USDC
+// A self-paid Phantom transfer the same day also carried a SetLoadedAccountsDataSizeLimit.
 import { describe, expect, it } from "vitest";
 import {
   AccountRole, address, appendTransactionMessageInstructions, compileTransaction, createTransactionMessage,
@@ -23,13 +25,24 @@ const USDC = address("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 const NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const BLOCKHASH = { blockhash: "11111111111111111111111111111111" as Blockhash, lastValidBlockHeight: 1n };
 
-/** A Lighthouse instruction of `kind` (its first byte; 6 = AccountInfoMulti, 10 = TokenAccountMulti, 15 = SysvarClock). */
-const guard = (kind: number, size: number, accounts: Address[] = []): Instruction => ({
+const hex = (h: string) => Uint8Array.from(h.match(/../g) ?? [], (b) => parseInt(b, 16));
+const on = (data: Uint8Array, ...accounts: Address[]): Instruction => ({
   programAddress: LIGHTHOUSE,
   accounts: accounts.map((a) => ({ address: a, role: AccountRole.READONLY })),
-  data: Uint8Array.from({ length: size }, (_, i) => (i === 0 ? kind : 3)),
+  data,
 });
-/** SetLoadedAccountsDataSizeLimit, exactly as Phantom sends it (4 MiB). */
+/** A Lighthouse instruction of `kind` (its first byte; 6 = AccountInfoMulti, 10 = TokenAccountMulti, 15 = SysvarClock). */
+const guard = (kind: number, size: number, accounts: Address[] = []): Instruction =>
+  on(Uint8Array.from({ length: size }, (_, i) => (i === 0 ? kind : 3)), ...accounts);
+
+// Phantom's real guards (20 Nov 2026).
+const PHANTOM = {
+  noLamports: hex("06040100000000000000000000"), // lamports == 0: the buyer (no SOL), and the two new channel accounts
+  ownerSystemNoData: hex("06040203000001000000000000000000"), // owner == System, data length == 0: the fee payer, and the buyer after
+  tokenAccountState: hex("06040303010001a50000000000000000081aaa0f8d360f1bafc8704d5e0d1496bf121747016cb994beb1b54d2feef34c0e00a501"), // buyer USDC, before
+  tokenAccountAfter: hex("0a04030300000600000000000000000508"), // buyer USDC, after
+};
+/** SetLoadedAccountsDataSizeLimit, as Phantom sends it on a token transfer (4 MiB). */
 const dataLimit: Instruction = { programAddress: COMPUTE_BUDGET, accounts: [], data: Uint8Array.of(4, 0, 0, 64, 0) };
 const budget = (units: number, microLamports: bigint): Instruction[] => {
   const limit = new Uint8Array(5);
@@ -42,6 +55,37 @@ const budget = (units: number, microLamports: bigint): Instruction[] => {
 };
 const memo: Instruction = { programAddress: MEMO, accounts: [], data: new TextEncoder().encode("0123456789abcdef") };
 type Who = { buyer: Address; buyerToken: Address; feePayer: Address };
+
+// Lighthouse account-info checks, byte for byte as lighthouse-sdk 2.1.0 encodes them (kind 6 = 6, log level, count, checks).
+const u64le = (v: bigint) => [...new Uint8Array(new BigUint64Array([v]).buffer)];
+const infoMulti = (...checks: number[][]) => Uint8Array.from([6, 4, checks.length, ...checks.flat()]);
+const lamports = (op: number, v: bigint) => [0, ...u64le(v), op]; // op: 0 ==, 1 !=, 2 >, 3 <, 4 >=, 5 <=
+const ownerIsSystem = [3, 0, 0];
+const noData = [1, ...u64le(0n), 0];
+/** Fee-payer checks no other settlement can break: owner, data length, flags, and the trivial "lamports >= 0". */
+const safeOnFeePayer = (fp: Address): Instruction[] => [
+  on(PHANTOM.ownerSystemNoData, fp),
+  on(infoMulti(lamports(4, 0n)), fp),
+  on(Uint8Array.from([5, 4, ...ownerIsSystem]), fp), // AssertAccountInfo, one check
+  on(infoMulti([5, 1, 0], [6, 1, 0], [7, 0, 0]), fp), // signer, writable, not executable
+];
+/** Guards that list the fee payer and must be refused: other kinds, any real balance check, malformed bodies. */
+const unsafeOnFeePayer = (fp: Address): Instruction[] => [
+  ...[2, 3, 7, 8, 9, 10].map((kind) => guard(kind, 26, [fp])),
+  guard(6, 26, [fp]), // kind 6 with a body that is not account-info checks
+  on(infoMulti(lamports(4, 178_222_674n), ownerIsSystem, noData), fp), // Phantom's floor on a self-paid wallet
+  on(infoMulti(lamports(4, 1n)), fp), // any floor above 0
+  on(Uint8Array.from([5, 4, ...lamports(4, 1n)]), fp), // the same in AssertAccountInfo
+  ...[0, 1, 2, 3, 5].map((op) => on(infoMulti(lamports(op, 0n)), fp)), // ==, !=, >, <, <=
+  on(infoMulti([3, 0, 1]), fp), // owner != System
+  on(infoMulti(ownerIsSystem, [4, ...u64le(2n ** 64n - 1n), 0]), fp), // rent epoch
+  on(infoMulti([8, ...new Array(32).fill(0), 0, 0]), fp), // data hash
+  on(Uint8Array.from([6, 4, 0]), fp), // no checks
+  on(Uint8Array.from([6, 4, 0x81, ...ownerIsSystem]), fp), // a count that is not one byte
+  on(Uint8Array.from([...infoMulti(ownerIsSystem), 9]), fp), // a trailing byte
+];
+const SAFE_COUNT = safeOnFeePayer(LIGHTHOUSE).length;
+const UNSAFE_COUNT = unsafeOnFeePayer(LIGHTHOUSE).length;
 
 // ---------- exact: a data request ----------
 
@@ -57,7 +101,7 @@ async function dataRequest(around: (who: Who) => Around) {
     createTransactionMessage({ version: 0 }),
     (m) => setTransactionMessageFeePayer(feePayer.address, m),
     (m) => setTransactionMessageLifetimeUsingBlockhash(BLOCKHASH, m),
-    (m) => appendTransactionMessageInstructions([...(a.first ?? []), ...budget(80_000, 100_000n), ...(a.before ?? []), transfer, memo, ...(a.after ?? [])], m),
+    (m) => appendTransactionMessageInstructions([...(a.first ?? []), ...budget(200_000, 1n), ...(a.before ?? []), transfer, memo, ...(a.after ?? [])], m),
   );
   const transaction = getBase64EncodedWireTransaction(await partiallySignTransactionMessageWithSigners(message));
   const requirements = { scheme: "exact", network: NETWORK, asset: USDC, amount: "2600", payTo: payTo.address, maxTimeoutSeconds: 60, extra: { feePayer: feePayer.address } };
@@ -65,51 +109,14 @@ async function dataRequest(around: (who: Who) => Around) {
   return { buyer: buyer.address, verify: () => facilitator.verify({ x402Version: 2, accepted: requirements, payload: { transaction } } as never, requirements as never) };
 }
 
-// Lighthouse account-info checks (AssertAccountInfoMulti, kind 6), byte for byte as lighthouse-sdk 2.1.0 encodes them.
-const u64le = (v: bigint) => [...new Uint8Array(new BigUint64Array([v]).buffer)];
-const infoMulti = (...checks: number[][]) => Uint8Array.from([6, 4, checks.length, ...checks.flat()]);
-const lamports = (op: number, v: bigint) => [0, ...u64le(v), op]; // op: 0 ==, 2 >, 3 <, 4 >=, 5 <=
-const ownerIsSystem = [3, 0, 0];
-const noData = [1, ...u64le(0n), 0];
-const rentEpoch = [4, ...u64le(2n ** 64n - 1n), 0];
-const onFeePayer = (data: Uint8Array, feePayer: Address): Instruction => ({ programAddress: LIGHTHOUSE, accounts: [{ address: feePayer, role: AccountRole.READONLY }], data });
-/**
- * Phantom's last guard reads the fee payer, our facilitator: "lamports >= X, owner System, data length 0"
- * (mainnet, 20 Nov 2026), X = its simulated balance minus a 0.055-0.09 SOL margin. Our fee payer holds
- * about 0.01 SOL, so X should come out as 0.
- */
-const phantomFeePayerCheck = (feePayer: Address) => onFeePayer(infoMulti(lamports(4, 0n), ownerIsSystem, noData), feePayer);
-const RENT_EXEMPT_MIN = 890_880n; // lamports a system account must keep; below it a transaction fails anyway
-/** Fee-payer checks no other settlement can break: owner, data length, flags, a floor at or under the rent minimum. */
-const safeOnFeePayer = (fp: Address): Instruction[] => [
-  phantomFeePayerCheck(fp),
-  onFeePayer(infoMulti(lamports(4, RENT_EXEMPT_MIN)), fp),
-  onFeePayer(infoMulti(lamports(2, RENT_EXEMPT_MIN - 1n)), fp),
-  onFeePayer(Uint8Array.from([5, 4, ...ownerIsSystem]), fp), // AssertAccountInfo, one check
-  onFeePayer(infoMulti([5, 1, 0], [6, 1, 0], [7, 0, 0]), fp), // signer, writable, not executable
-];
-/** Guards that list the fee payer and must be refused: other kinds, and balance checks a settlement could break. */
-const unsafeOnFeePayer = (fp: Address): Instruction[] => [
-  ...[2, 3, 7, 8, 9, 10].map((kind) => guard(kind, 26, [fp])),
-  onFeePayer(infoMulti(lamports(4, 178_222_674n), ownerIsSystem, noData), fp), // a real Phantom floor on a richer fee payer
-  onFeePayer(infoMulti(lamports(4, RENT_EXEMPT_MIN + 1n)), fp), // floor just above the rent minimum
-  onFeePayer(infoMulti(lamports(2, RENT_EXEMPT_MIN)), fp), // "> rent minimum" = ">= rent minimum + 1"
-  onFeePayer(infoMulti(lamports(4, 2n ** 40n)), fp), // a floor that needs the high bytes
-  ...[0, 1, 3, 5].map((op) => onFeePayer(infoMulti(lamports(op, 0n)), fp)), // ==, !=, <, <=
-  onFeePayer(infoMulti([3, 0, 1]), fp), // owner != System
-  onFeePayer(infoMulti(ownerIsSystem, rentEpoch), fp), // rent epoch
-  onFeePayer(Uint8Array.from([...infoMulti(ownerIsSystem), 9]), fp), // a trailing byte
-];
-const SAFE_COUNT = safeOnFeePayer(LIGHTHOUSE).length;
-const UNSAFE_COUNT = unsafeOnFeePayer(LIGHTHOUSE).length;
-
+/** Phantom's guards around a transfer: the same kinds it puts around a channel open, plus its data-size limit. */
 const phantomAround = ({ buyer, buyerToken, feePayer }: Who): Around => ({
-  before: [guard(10, 17, [buyerToken]), guard(6, 52, [buyer]), dataLimit],
-  after: [phantomFeePayerCheck(feePayer), guard(10, 27, [buyerToken])],
+  before: [on(PHANTOM.noLamports, buyer), on(PHANTOM.ownerSystemNoData, feePayer), on(PHANTOM.tokenAccountState, buyerToken), dataLimit],
+  after: [on(PHANTOM.ownerSystemNoData, buyer), on(PHANTOM.tokenAccountAfter, buyerToken)],
 });
 
 describe("a data request signed in Phantom (exact)", () => {
-  it("passes as Phantom sends it now: guards before and after the transfer, plus a data-size limit", async () => {
+  it("passes with Phantom's guards before and after the transfer, one reading the fee payer, plus a data-size limit", async () => {
     const { verify, buyer } = await dataRequest(phantomAround);
     await expect(verify()).resolves.toMatchObject({ isValid: true, payer: buyer });
   });
@@ -127,7 +134,7 @@ describe("a data request signed in Phantom (exact)", () => {
       }
       for (let i = 0; i < UNSAFE_COUNT; i++) {
         const { verify } = await dataRequest(({ feePayer }) => ({ [side]: [unsafeOnFeePayer(feePayer)[i]!] }));
-        await expect(verify(), `${side} #${i}`).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds" });
+        await expect(verify(), `${side} unsafe #${i}`).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds" });
       }
     }
   });
@@ -139,11 +146,11 @@ describe("a data request signed in Phantom (exact)", () => {
     }
   });
 
-  it("refuses more than 6 guards, a second data-size limit, and a guard before the compute budget", async () => {
-    const seven = await dataRequest(() => ({ before: [guard(6, 26), guard(10, 27), guard(6, 26), guard(10, 27)], after: [guard(6, 26), guard(10, 27), guard(6, 26)] }));
+  it("refuses more than 10 guards, a second data-size limit, and a guard before the compute budget", async () => {
+    const eleven = await dataRequest(() => ({ before: Array.from({ length: 6 }, () => guard(6, 26)), after: Array.from({ length: 5 }, () => guard(10, 27)) }));
     const twoLimits = await dataRequest(() => ({ before: [dataLimit, guard(6, 26), dataLimit] }));
     const tooEarly = await dataRequest(() => ({ first: [guard(6, 26)] }));
-    for (const { verify } of [seven, twoLimits, tooEarly]) {
+    for (const { verify } of [eleven, twoLimits, tooEarly]) {
       await expect(verify()).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_transaction_instructions_length" });
     }
   });
@@ -160,7 +167,7 @@ describe("a data request signed in Phantom (exact)", () => {
 const DEPOSIT = 55_000n;
 const OPEN_SLOT = 1_000n;
 const GRACE = 3_600;
-type Parts = { budget: Instruction[]; open: Instruction; memo: Instruction[] } & Who;
+type Parts = { budget: Instruction[]; open: Instruction; memo: Instruction[]; channel: Address; channelToken: Address } & Who;
 
 /** A question's channel open, rebuilt with its instructions laid out by `layout` and signed again by the buyer. */
 async function questionDeposit(layout: (parts: Parts) => Instruction[]) {
@@ -169,7 +176,7 @@ async function questionDeposit(layout: (parts: Parts) => Instruction[]) {
   const built = await buildOpenPaymentChannelTransaction({
     payer: buyer, payee: feePayer.address, mint: USDC, authorizedSigner: authorizer.address, feePayer: feePayer.address,
     tokenProgram: TOKEN_PROGRAM_ADDRESS, deposit: DEPOSIT, gracePeriod: GRACE, openSlot: OPEN_SLOT, blockhash: BLOCKHASH,
-    computeUnitLimit: 240_000, computeUnitPriceMicroLamports: 100_000,
+    computeUnitLimit: 200_000, computeUnitPriceMicroLamports: 1,
   });
   const wire = await reshape(built.transaction, buyer, (parts) => layout({ ...parts, buyer: buyer.address, buyerToken, feePayer: feePayer.address }));
   const verify = () => verifyOpenTransaction(wire, {
@@ -180,14 +187,17 @@ async function questionDeposit(layout: (parts: Parts) => Instruction[]) {
   return { verify, channelId: built.channelId };
 }
 
-async function reshape(wire: string, buyer: KeyPairSigner, layout: (parts: { budget: Instruction[]; open: Instruction; memo: Instruction[] }) => Instruction[]) {
+async function reshape(wire: string, buyer: KeyPairSigner, layout: (parts: Omit<Parts, keyof Who>) => Instruction[]) {
   const tx = getTransactionDecoder().decode(getBase64Encoder().encode(wire));
   const message = decompileTransactionMessage(getCompiledTransactionMessageDecoder().decode(tx.messageBytes));
   const ixs = message.instructions as Instruction[];
+  const open = ixs.find((ix) => ix.programAddress === PAYMENT_CHANNELS_PROGRAM_ID) as Instruction;
   const parts = {
     budget: ixs.filter((ix) => ix.programAddress === COMPUTE_BUDGET),
-    open: ixs.find((ix) => ix.programAddress === PAYMENT_CHANNELS_PROGRAM_ID) as Instruction,
+    open,
     memo: ixs.filter((ix) => ix.programAddress === MEMO),
+    channel: open.accounts![5]!.address, // open accounts: payer, rent payer, payee, mint, authorizer, channel, payer USDC, channel USDC, ...
+    channelToken: open.accounts![7]!.address,
   };
   const rebuilt = pipe(
     createTransactionMessage({ version: 0 }),
@@ -199,9 +209,13 @@ async function reshape(wire: string, buyer: KeyPairSigner, layout: (parts: { bud
 }
 
 describe("a question deposit signed in Phantom (the upto channel open)", () => {
-  it("passes as Phantom sends it now: guards before and after the open (the last reads the fee payer), plus a data-size limit", async () => {
-    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken, feePayer }) => [
-      ...budget, guard(10, 17, [buyerToken]), guard(6, 52, [buyer]), dataLimit, open, ...memo, phantomFeePayerCheck(feePayer), guard(10, 27, [buyerToken]),
+  it("passes exactly as Phantom sent it on 20 Nov: 5 guards before the open (one reads the fee payer), 2 after", async () => {
+    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken, feePayer, channel, channelToken }) => [
+      ...budget,
+      on(PHANTOM.noLamports, buyer), on(PHANTOM.ownerSystemNoData, feePayer), on(PHANTOM.tokenAccountState, buyerToken),
+      on(PHANTOM.noLamports, channelToken), on(PHANTOM.noLamports, channel),
+      open, ...memo,
+      on(PHANTOM.ownerSystemNoData, buyer), on(PHANTOM.tokenAccountAfter, buyerToken),
     ]);
     await expect(verify()).resolves.toMatchObject({ channelId });
   });
@@ -215,14 +229,16 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
       }
       for (let i = 0; i < UNSAFE_COUNT; i++) {
         const bad = await questionDeposit((parts) => place(parts, unsafeOnFeePayer(parts.feePayer)[i]!));
-        await expect(bad.verify(), `${where} #${i}`).rejects.toThrow(/feePayer must not appear in Lighthouse instruction accounts/);
+        await expect(bad.verify(), `${where} unsafe #${i}`).rejects.toThrow(/feePayer must not appear in Lighthouse instruction accounts/);
       }
     }
   });
 
-  it("passes with the data-size limit among the compute-budget instructions", async () => {
-    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, dataLimit, guard(6, 52, [buyer]), open, ...memo]);
-    await expect(verify()).resolves.toMatchObject({ channelId });
+  it("passes with a data-size limit after the guards or among the compute-budget instructions", async () => {
+    const after = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, on(PHANTOM.noLamports, buyer), dataLimit, open, ...memo]);
+    const among = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, dataLimit, on(PHANTOM.noLamports, buyer), open, ...memo]);
+    await expect(after.verify()).resolves.toMatchObject({ channelId: after.channelId });
+    await expect(among.verify()).resolves.toMatchObject({ channelId: among.channelId });
   });
 
   it("still passes as Phantom sent it before November and Solflare does: memo, then 2 guards", async () => {
@@ -237,11 +253,11 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
     await expect(after.verify()).rejects.toThrow(/must be an account, mint or token assertion/);
   });
 
-  it("refuses more than 6 guards in all", async () => {
+  it("refuses more than 10 guards in all", async () => {
     const { verify } = await questionDeposit(({ budget, open, memo }) => [
-      ...budget, guard(6, 26), guard(10, 27), guard(6, 26), guard(10, 27), open, ...memo, guard(6, 26), guard(10, 27), guard(6, 26),
+      ...budget, ...Array.from({ length: 8 }, () => guard(6, 26)), open, ...memo, guard(6, 26), guard(10, 27), guard(6, 26),
     ]);
-    await expect(verify()).rejects.toThrow(/at most 6 Lighthouse instructions/);
+    await expect(verify()).rejects.toThrow(/at most 10 Lighthouse instructions/);
   });
 
   it("refuses a second data-size limit", async () => {

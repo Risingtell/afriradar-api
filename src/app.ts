@@ -175,9 +175,10 @@ export async function createApp(deps: Deps) {
   }
   // A refused buyer-built transaction goes to the Worker log (never the public ledger), so a wallet
   // layout we do not accept yet can be read with `wrangler tail` and fixed from the real bytes.
-  // Only refusals of the buyer's own transaction (not RPC, simulation or blockhash trouble), and at
-  // most 20 a minute per isolate, so a stream of junk payments cannot flood the log.
-  const REFUSAL = /^invalid_(exact|upto)_svm_payload_|verifyOpenTransaction:/;
+  // Only refusals of the transaction's layout (the instructions a wallet added), not amounts, expiry,
+  // RPC, simulation or blockhash trouble, and at most 20 a minute per isolate, so a stream of junk
+  // payments cannot flood the log.
+  const REFUSAL = /^invalid_exact_svm_payload_(transaction_instructions|invalid_lighthouse|transaction_fee_payer|unknown_|no_transfer)|verifyOpenTransaction:/;
   let logWindow = { minute: 0, count: 0 };
   const logRefused = (stage: "verify" | "settle", payload: { payload?: unknown }, req: { scheme: string; network: string }, why: string) => {
     if (!REFUSAL.test(why)) return;

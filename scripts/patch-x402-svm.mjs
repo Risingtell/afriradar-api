@@ -5,29 +5,34 @@
 //
 //   limit, price, guard(10), guard(6), SetLoadedAccountsDataSizeLimit, TransferChecked, memo, guard(6), guard(10)
 //
+// and a real Phantom question deposit, captured from our own Worker log the same day:
+//
+//   limit, price, guard(6) buyer, guard(6) fee payer, guard(6) buyer USDC, guard(6) channel USDC,
+//   guard(6) channel, open, memo, guard(6) buyer, guard(10) buyer USDC
+//
 // @x402/svm 2.28 accepts guards only after the payment and refuses any compute-budget instruction
 // other than the limit and the price, so every Phantom data request (exact) and question deposit
 // (the upto channel open) failed verification. 2.31 refuses this layout too and needs @solana/kit 8,
 // so until that upgrade this script patches 2.28.
 //
 // The rules after the patch, for both schemes:
-//  - Lighthouse instructions may sit anywhere after the compute-unit limit and price, at most 6;
+//  - Lighthouse instructions may sit anywhere after the compute-unit limit and price, at most 10
+//    (a real Phantom question deposit carries 7: 5 before the open, 2 after; the fee guard and the
+//    transaction size limit bound the cost, so the cap is only a sanity bound);
 //  - each must be an assertion on an account, a mint or a token account (Lighthouse kinds 2, 3,
 //    5-10). Refused: MemoryWrite and MemoryClose (0, 1), which move lamports; AccountDelta (4), which
 //    needs a MemoryWrite; stake and loader checks (11-14); the clock check (15), which can pass the
 //    facilitator's simulation and fail on chain with the fee payer paying; the tree checks (16, 17);
 //  - a guard may list the facilitator's own address only to check something that no other
-//    payment settling at the same time can change: an account-info assertion (kinds 5, 6) whose
-//    every check is the owner (==), the data length, the signer, writable or executable flags, or
-//    a balance floor (> or >=) no higher than 890,880 lamports, the rent-exempt minimum of a
-//    system account: below it the transaction fails anyway, so such a floor adds no new way to
-//    fail. Any other balance check is refused: every settlement LOWERS the fee payer's balance,
-//    so a buyer could send many payments at once that each assert "balance >= nearly what it is
-//    now"; one lands, the rest fail on chain, and the fee payer pays for each. Phantom adds
-//    "lamports >= X, owner System, data length 0" on the fee payer after the payment (decoded from
-//    mainnet, 20 Nov), with X its simulated balance minus a 0.055-0.09 SOL margin, which for our
-//    fee payer (about 0.01 SOL) should come out as 0. Every other kind that lists the fee payer is
-//    refused (stock 2.28 let any Lighthouse instruction after an exact transfer list it);
+//    payment settling at the same time can change: an account-info assertion (kinds 5, 6, with
+//    1 to 8 checks) whose every check is the owner (==), the data length, the signer, writable or
+//    executable flags, or the trivial "lamports >= 0". Phantom sends exactly "owner System, data
+//    length 0" on the fee payer before a question deposit (captured from a real Phantom payment
+//    on 20 Nov). Any real balance check is refused: every settlement LOWERS the fee payer's
+//    balance, so a buyer could send many payments at once that each assert "balance >= nearly what
+//    it is now"; one lands, the rest fail on chain, and the fee payer pays for each. Every other
+//    kind that lists the fee payer is refused too (stock 2.28 let any Lighthouse instruction after
+//    an exact transfer list it);
 //  - one SetLoadedAccountsDataSizeLimit is allowed after the limit and price; it changes no fee;
 //  - everything else (compute budget, the transfer or the open, memo, amounts, accounts) is
 //    checked exactly as before, in the same order.
@@ -39,7 +44,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MARK = "afriradar-patch:lighthouse-guards:v5";
+const MARK = "afriradar-patch:lighthouse-guards:v6";
 const ANY_MARK = "afriradar-patch:lighthouse-guards";
 const WRITTEN_FOR = "2.28.0";
 const root = fileURLToPath(new URL("../node_modules/@x402/svm/", import.meta.url));
@@ -76,8 +81,7 @@ function patched(text, file) {
 
 const RULES = [
   `/* ${MARK} (see scripts/patch-x402-svm.mjs in afriradar-api) */`,
-  "var AFRIRADAR_MAX_GUARDS = 6;",
-  "var AFRIRADAR_RENT_EXEMPT_MIN = 890880;",
+  "var AFRIRADAR_MAX_GUARDS = 10;",
   "var AFRIRADAR_GUARD_KINDS = /* @__PURE__ */ new Set([2, 3, 5, 6, 7, 8, 9, 10]);",
   "function afriradarIsGuard(data) {",
   "  return !!data && data.length > 0 && AFRIRADAR_GUARD_KINDS.has(data[0]);",
@@ -87,22 +91,14 @@ const RULES = [
   "  let o = 2;",
   "  let count = 1;",
   "  if (data[0] === 6) {",
-  "    count = 0;",
-  "    for (let shift = 0; ; shift += 7) {",
-  "      if (o >= data.length || shift > 28) return false;",
-  "      const b = data[o++];",
-  "      count |= (b & 127) << shift;",
-  "      if (!(b & 128)) break;",
-  "    }",
-  "    if (count < 1 || count > 8) return false;",
+  "    count = data[o++];",
+  "    if (!(count >= 1 && count <= 8)) return false;",
   "  }",
   "  for (let k = 0; k < count; k += 1) {",
   "    const tag = data[o++];",
   "    if (tag === 0) {",
-  "      if (o + 9 > data.length || data[o + 4] | data[o + 5] | data[o + 6] | data[o + 7]) return false;",
-  "      const floor = (data[o] | data[o + 1] << 8 | data[o + 2] << 16 | data[o + 3] << 24) >>> 0;",
-  "      const op = data[o + 8];",
-  "      if (!(op === 4 && floor <= AFRIRADAR_RENT_EXEMPT_MIN || op === 2 && floor < AFRIRADAR_RENT_EXEMPT_MIN)) return false;",
+  "      if (o + 9 > data.length || data[o + 8] !== 4) return false;",
+  "      for (let b = o; b < o + 8; b += 1) if (data[b] !== 0) return false;",
   "      o += 9;",
   "    } else if (tag === 1) {",
   "      if (o + 9 > data.length) return false;",
