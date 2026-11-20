@@ -173,7 +173,30 @@ export async function createApp(deps: Deps) {
       .register(MAINNET as Network, new ExactServer())
       .register(MAINNET as Network, new MainnetUptoServer({ receiverAuthorizerSigner: deps.authorizer, rpcUrl: mainnet.rpcUrl }));
   }
+  // A refused buyer-built transaction goes to the Worker log (never the public ledger), so a wallet
+  // layout we do not accept yet can be read with `wrangler tail` and fixed from the real bytes.
+  // Only refusals of the buyer's own transaction (not RPC, simulation or blockhash trouble), and at
+  // most 20 a minute per isolate, so a stream of junk payments cannot flood the log.
+  const REFUSAL = /^invalid_(exact|upto)_svm_payload_|verifyOpenTransaction:/;
+  let logWindow = { minute: 0, count: 0 };
+  const logRefused = (stage: "verify" | "settle", payload: { payload?: unknown }, req: { scheme: string; network: string }, why: string) => {
+    if (!REFUSAL.test(why)) return;
+    const minute = Math.floor(Date.now() / 60_000);
+    if (logWindow.minute !== minute) logWindow = { minute, count: 0 };
+    if (++logWindow.count > 20) return;
+    const p = (payload.payload ?? {}) as { transaction?: unknown; openTransaction?: unknown };
+    const tx = p.transaction ?? p.openTransaction;
+    if (typeof tx === "string") console.warn(JSON.stringify({ refused: stage, scheme: req.scheme, network: req.network, why: why.slice(0, 400), tx: tx.slice(0, 2400) }));
+  };
   resourceServer
+    // The in-process facilitator answers a refused transaction with isValid: false (no throw), so a
+    // refused data request is caught here; onVerifyFailure only sees errors that were thrown.
+    .onAfterVerify(async (ctx) => {
+      if (!ctx.result.isValid) logRefused("verify", ctx.paymentPayload, ctx.requirements, `${ctx.result.invalidReason}: ${ctx.result.invalidMessage ?? ""}`);
+    })
+    .onVerifyFailure(async (ctx) => {
+      logRefused("verify", ctx.paymentPayload, ctx.requirements, ctx.error.message);
+    })
     .onAfterSettle(async (ctx) => {
       const r = ctx.result;
       const status = ctx.phase === "before-handler" ? "deposit" : ctx.phase === "cancel" ? "refunded" : "settled";
@@ -198,6 +221,7 @@ export async function createApp(deps: Deps) {
       const route = pathOf(ctx.paymentPayload.resource?.url);
       const network = ctx.requirements.network;
       if (err.errorReason !== "settlement_pending" || !tx) {
+        logRefused("settle", ctx.paymentPayload, ctx.requirements, err.message || err.errorReason || "");
         // err.message is "reason: explanation"; the reason code alone does not say what to fix.
         await record({ id: `${tx || crypto.randomUUID()}:failed`, tx: tx || null, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "failed", detail: err.message || err.errorReason });
         return;

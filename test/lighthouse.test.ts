@@ -65,9 +65,47 @@ async function dataRequest(around: (who: Who) => Around) {
   return { buyer: buyer.address, verify: () => facilitator.verify({ x402Version: 2, accepted: requirements, payload: { transaction } } as never, requirements as never) };
 }
 
-const phantomAround = ({ buyer, buyerToken }: Who): Around => ({
+// Lighthouse account-info checks (AssertAccountInfoMulti, kind 6), byte for byte as lighthouse-sdk 2.1.0 encodes them.
+const u64le = (v: bigint) => [...new Uint8Array(new BigUint64Array([v]).buffer)];
+const infoMulti = (...checks: number[][]) => Uint8Array.from([6, 4, checks.length, ...checks.flat()]);
+const lamports = (op: number, v: bigint) => [0, ...u64le(v), op]; // op: 0 ==, 2 >, 3 <, 4 >=, 5 <=
+const ownerIsSystem = [3, 0, 0];
+const noData = [1, ...u64le(0n), 0];
+const rentEpoch = [4, ...u64le(2n ** 64n - 1n), 0];
+const onFeePayer = (data: Uint8Array, feePayer: Address): Instruction => ({ programAddress: LIGHTHOUSE, accounts: [{ address: feePayer, role: AccountRole.READONLY }], data });
+/**
+ * Phantom's last guard reads the fee payer, our facilitator: "lamports >= X, owner System, data length 0"
+ * (mainnet, 20 Nov 2026), X = its simulated balance minus a 0.055-0.09 SOL margin. Our fee payer holds
+ * about 0.01 SOL, so X should come out as 0.
+ */
+const phantomFeePayerCheck = (feePayer: Address) => onFeePayer(infoMulti(lamports(4, 0n), ownerIsSystem, noData), feePayer);
+const RENT_EXEMPT_MIN = 890_880n; // lamports a system account must keep; below it a transaction fails anyway
+/** Fee-payer checks no other settlement can break: owner, data length, flags, a floor at or under the rent minimum. */
+const safeOnFeePayer = (fp: Address): Instruction[] => [
+  phantomFeePayerCheck(fp),
+  onFeePayer(infoMulti(lamports(4, RENT_EXEMPT_MIN)), fp),
+  onFeePayer(infoMulti(lamports(2, RENT_EXEMPT_MIN - 1n)), fp),
+  onFeePayer(Uint8Array.from([5, 4, ...ownerIsSystem]), fp), // AssertAccountInfo, one check
+  onFeePayer(infoMulti([5, 1, 0], [6, 1, 0], [7, 0, 0]), fp), // signer, writable, not executable
+];
+/** Guards that list the fee payer and must be refused: other kinds, and balance checks a settlement could break. */
+const unsafeOnFeePayer = (fp: Address): Instruction[] => [
+  ...[2, 3, 7, 8, 9, 10].map((kind) => guard(kind, 26, [fp])),
+  onFeePayer(infoMulti(lamports(4, 178_222_674n), ownerIsSystem, noData), fp), // a real Phantom floor on a richer fee payer
+  onFeePayer(infoMulti(lamports(4, RENT_EXEMPT_MIN + 1n)), fp), // floor just above the rent minimum
+  onFeePayer(infoMulti(lamports(2, RENT_EXEMPT_MIN)), fp), // "> rent minimum" = ">= rent minimum + 1"
+  onFeePayer(infoMulti(lamports(4, 2n ** 40n)), fp), // a floor that needs the high bytes
+  ...[0, 1, 3, 5].map((op) => onFeePayer(infoMulti(lamports(op, 0n)), fp)), // ==, !=, <, <=
+  onFeePayer(infoMulti([3, 0, 1]), fp), // owner != System
+  onFeePayer(infoMulti(ownerIsSystem, rentEpoch), fp), // rent epoch
+  onFeePayer(Uint8Array.from([...infoMulti(ownerIsSystem), 9]), fp), // a trailing byte
+];
+const SAFE_COUNT = safeOnFeePayer(LIGHTHOUSE).length;
+const UNSAFE_COUNT = unsafeOnFeePayer(LIGHTHOUSE).length;
+
+const phantomAround = ({ buyer, buyerToken, feePayer }: Who): Around => ({
   before: [guard(10, 17, [buyerToken]), guard(6, 52, [buyer]), dataLimit],
-  after: [guard(6, 26, [buyer]), guard(10, 27, [buyerToken])],
+  after: [phantomFeePayerCheck(feePayer), guard(10, 27, [buyerToken])],
 });
 
 describe("a data request signed in Phantom (exact)", () => {
@@ -81,10 +119,16 @@ describe("a data request signed in Phantom (exact)", () => {
     await expect(verify()).resolves.toMatchObject({ isValid: true });
   });
 
-  it("refuses a guard that lists the fee payer, before or after the transfer (stock 2.28 let one after it through)", async () => {
+  it("lets the fee payer be read only by checks no other settlement can break, before or after the transfer", async () => {
     for (const side of ["before", "after"] as const) {
-      const { verify } = await dataRequest(({ feePayer }) => ({ [side]: [guard(6, 26, [feePayer])] }));
-      await expect(verify()).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds" });
+      for (let i = 0; i < SAFE_COUNT; i++) {
+        const reads = await dataRequest(({ feePayer }) => ({ [side]: [safeOnFeePayer(feePayer)[i]!] }));
+        await expect(reads.verify(), `${side} safe #${i}`).resolves.toMatchObject({ isValid: true });
+      }
+      for (let i = 0; i < UNSAFE_COUNT; i++) {
+        const { verify } = await dataRequest(({ feePayer }) => ({ [side]: [unsafeOnFeePayer(feePayer)[i]!] }));
+        await expect(verify(), `${side} #${i}`).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds" });
+      }
     }
   });
 
@@ -155,11 +199,25 @@ async function reshape(wire: string, buyer: KeyPairSigner, layout: (parts: { bud
 }
 
 describe("a question deposit signed in Phantom (the upto channel open)", () => {
-  it("passes as Phantom sends it now: guards before and after the open, plus a data-size limit", async () => {
-    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken }) => [
-      ...budget, guard(10, 17, [buyerToken]), guard(6, 52, [buyer]), dataLimit, open, ...memo, guard(6, 26, [buyer]), guard(10, 27, [buyerToken]),
+  it("passes as Phantom sends it now: guards before and after the open (the last reads the fee payer), plus a data-size limit", async () => {
+    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken, feePayer }) => [
+      ...budget, guard(10, 17, [buyerToken]), guard(6, 52, [buyer]), dataLimit, open, ...memo, phantomFeePayerCheck(feePayer), guard(10, 27, [buyerToken]),
     ]);
     await expect(verify()).resolves.toMatchObject({ channelId });
+  });
+
+  it("lets the fee payer be read only by checks no other settlement can break, before or after the open", async () => {
+    for (const where of ["before", "after"] as const) {
+      const place = (parts: Parts, g: Instruction) => (where === "before" ? [...parts.budget, g, parts.open, ...parts.memo] : [...parts.budget, parts.open, ...parts.memo, g]);
+      for (let i = 0; i < SAFE_COUNT; i++) {
+        const reads = await questionDeposit((parts) => place(parts, safeOnFeePayer(parts.feePayer)[i]!));
+        await expect(reads.verify(), `${where} safe #${i}`).resolves.toMatchObject({ channelId: reads.channelId });
+      }
+      for (let i = 0; i < UNSAFE_COUNT; i++) {
+        const bad = await questionDeposit((parts) => place(parts, unsafeOnFeePayer(parts.feePayer)[i]!));
+        await expect(bad.verify(), `${where} #${i}`).rejects.toThrow(/feePayer must not appear in Lighthouse instruction accounts/);
+      }
+    }
   });
 
   it("passes with the data-size limit among the compute-budget instructions", async () => {
@@ -170,11 +228,6 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
   it("still passes as Phantom sent it before November and Solflare does: memo, then 2 guards", async () => {
     const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken }) => [...budget, open, ...memo, guard(6, 26, [buyer]), guard(10, 64, [buyerToken])]);
     await expect(verify()).resolves.toMatchObject({ channelId });
-  });
-
-  it("refuses a guard before the open that lists the fee payer", async () => {
-    const { verify } = await questionDeposit(({ budget, open, memo, feePayer }) => [...budget, guard(6, 26, [feePayer]), open, ...memo]);
-    await expect(verify()).rejects.toThrow(/feePayer must not appear in Lighthouse instruction accounts/);
   });
 
   it("refuses Lighthouse kinds that are not account, mint or token assertions, before or after the open", async () => {

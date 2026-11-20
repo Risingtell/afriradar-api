@@ -16,8 +16,18 @@
 //    5-10). Refused: MemoryWrite and MemoryClose (0, 1), which move lamports; AccountDelta (4), which
 //    needs a MemoryWrite; stake and loader checks (11-14); the clock check (15), which can pass the
 //    facilitator's simulation and fail on chain with the fee payer paying; the tree checks (16, 17);
-//  - a guard never lists the facilitator's own address (stock 2.28 let one after an exact transfer
-//    list the fee payer);
+//  - a guard may list the facilitator's own address only to check something that no other
+//    payment settling at the same time can change: an account-info assertion (kinds 5, 6) whose
+//    every check is the owner (==), the data length, the signer, writable or executable flags, or
+//    a balance floor (> or >=) no higher than 890,880 lamports, the rent-exempt minimum of a
+//    system account: below it the transaction fails anyway, so such a floor adds no new way to
+//    fail. Any other balance check is refused: every settlement LOWERS the fee payer's balance,
+//    so a buyer could send many payments at once that each assert "balance >= nearly what it is
+//    now"; one lands, the rest fail on chain, and the fee payer pays for each. Phantom adds
+//    "lamports >= X, owner System, data length 0" on the fee payer after the payment (decoded from
+//    mainnet, 20 Nov), with X its simulated balance minus a 0.055-0.09 SOL margin, which for our
+//    fee payer (about 0.01 SOL) should come out as 0. Every other kind that lists the fee payer is
+//    refused (stock 2.28 let any Lighthouse instruction after an exact transfer list it);
 //  - one SetLoadedAccountsDataSizeLimit is allowed after the limit and price; it changes no fee;
 //  - everything else (compute budget, the transfer or the open, memo, amounts, accounts) is
 //    checked exactly as before, in the same order.
@@ -29,7 +39,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MARK = "afriradar-patch:lighthouse-guards:v2";
+const MARK = "afriradar-patch:lighthouse-guards:v5";
 const ANY_MARK = "afriradar-patch:lighthouse-guards";
 const WRITTEN_FOR = "2.28.0";
 const root = fileURLToPath(new URL("../node_modules/@x402/svm/", import.meta.url));
@@ -67,9 +77,50 @@ function patched(text, file) {
 const RULES = [
   `/* ${MARK} (see scripts/patch-x402-svm.mjs in afriradar-api) */`,
   "var AFRIRADAR_MAX_GUARDS = 6;",
+  "var AFRIRADAR_RENT_EXEMPT_MIN = 890880;",
   "var AFRIRADAR_GUARD_KINDS = /* @__PURE__ */ new Set([2, 3, 5, 6, 7, 8, 9, 10]);",
   "function afriradarIsGuard(data) {",
   "  return !!data && data.length > 0 && AFRIRADAR_GUARD_KINDS.has(data[0]);",
+  "}",
+  "function afriradarReadsFeePayerSafely(data) {",
+  "  if (!data || (data[0] !== 5 && data[0] !== 6)) return false;",
+  "  let o = 2;",
+  "  let count = 1;",
+  "  if (data[0] === 6) {",
+  "    count = 0;",
+  "    for (let shift = 0; ; shift += 7) {",
+  "      if (o >= data.length || shift > 28) return false;",
+  "      const b = data[o++];",
+  "      count |= (b & 127) << shift;",
+  "      if (!(b & 128)) break;",
+  "    }",
+  "    if (count < 1 || count > 8) return false;",
+  "  }",
+  "  for (let k = 0; k < count; k += 1) {",
+  "    const tag = data[o++];",
+  "    if (tag === 0) {",
+  "      if (o + 9 > data.length || data[o + 4] | data[o + 5] | data[o + 6] | data[o + 7]) return false;",
+  "      const floor = (data[o] | data[o + 1] << 8 | data[o + 2] << 16 | data[o + 3] << 24) >>> 0;",
+  "      const op = data[o + 8];",
+  "      if (!(op === 4 && floor <= AFRIRADAR_RENT_EXEMPT_MIN || op === 2 && floor < AFRIRADAR_RENT_EXEMPT_MIN)) return false;",
+  "      o += 9;",
+  "    } else if (tag === 1) {",
+  "      if (o + 9 > data.length) return false;",
+  "      o += 9;",
+  "    } else if (tag === 2) {",
+  "      if (o + 33 > data.length || data[o + 32] !== 0) return false;",
+  "      o += 33;",
+  "    } else if (tag === 3) {",
+  "      if (o + 2 > data.length || data[o + 1] !== 0) return false;",
+  "      o += 2;",
+  "    } else if (tag >= 5 && tag <= 7) {",
+  "      if (o + 2 > data.length) return false;",
+  "      o += 2;",
+  "    } else {",
+  "      return false;",
+  "    }",
+  "  }",
+  "  return o === data.length;",
   "}",
   "function afriradarIsDataLimit(data) {",
   "  return !!data && data.length === 5 && data[0] === 4;",
@@ -107,7 +158,7 @@ if (!patched(exact, exactPath)) {
         "      continue;",
         "    }",
         '    if (!afriradarIsGuard(ix.data)) return { payment, error: "invalid_exact_svm_payload_invalid_lighthouse_instruction" };',
-        "    if (facilitatorAddresses && (ix.accounts ?? []).some((account) => facilitatorAddresses.includes(account.address.toString()))) {",
+        "    if (facilitatorAddresses && (ix.accounts ?? []).some((account) => facilitatorAddresses.includes(account.address.toString())) && !afriradarReadsFeePayerSafely(ix.data)) {",
         "      return { payment, error: ErrFeePayerTransferringFunds };",
         "    }",
         "    guards += 1;",
@@ -208,7 +259,7 @@ if (!patched(chunk, chunkPath)) {
       "    if (!afriradarIsGuard(preIx.data)) {",
       `      throw new Error("verifyOpenTransaction: ${NOT_A_GUARD}");`,
       "    }",
-      '    rejectFeePayerOutsideOpen(preIx, staticAccounts, feePayer, "Lighthouse");',
+      '    if (!afriradarReadsFeePayerSafely(preIx.data)) rejectFeePayerOutsideOpen(preIx, staticAccounts, feePayer, "Lighthouse");',
       "    afriradarGuardsBeforeOpen += 1;",
       "    if (afriradarGuardsBeforeOpen > AFRIRADAR_MAX_GUARDS) {",
       "      throw new Error(`verifyOpenTransaction: at most ${AFRIRADAR_MAX_GUARDS} Lighthouse instructions are allowed in an open transaction`);",
@@ -239,7 +290,7 @@ if (!patched(chunk, chunkPath)) {
       "      if (!afriradarIsGuard(ix.data)) {",
       `        throw new Error("verifyOpenTransaction: ${NOT_A_GUARD}");`,
       "      }",
-      '      rejectFeePayerOutsideOpen(ix, staticAccounts, feePayer, "Lighthouse");',
+      '      if (!afriradarReadsFeePayerSafely(ix.data)) rejectFeePayerOutsideOpen(ix, staticAccounts, feePayer, "Lighthouse");',
     ].join("\n"),
     "upto: guards after the open",
   );
