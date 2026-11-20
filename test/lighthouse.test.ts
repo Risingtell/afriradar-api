@@ -1,9 +1,12 @@
 // Phantom wraps the payment instruction in Lighthouse guards, before and after it. scripts/patch-x402-svm.mjs
 // makes @x402/svm 2.28 accept that, and nothing looser. These tests pin the rules on both payment paths:
 // data requests (exact) and question deposits (the upto channel open). The guards are byte for byte the
-// ones in a real Phantom question deposit, captured from our Worker log on 20 Nov 2026:
-//   limit, price, guard(6) buyer, guard(6) fee payer, guard(6) buyer USDC, guard(6) channel USDC,
-//   guard(6) channel, open, memo, guard(6) buyer, guard(10) buyer USDC
+// ones real wallets sent us on mainnet (20 Nov 2026 unless noted):
+//   Phantom data request 4ft9Mzwp9d: limit, price, guard(10) treasury USDC, guard(6) fee payer,
+//     guard(6) buyer USDC, transfer, memo, guard(10) buyer USDC
+//   Phantom question deposit (from our Worker log): limit, price, guard(6) buyer, guard(6) fee payer,
+//     guard(6) buyer USDC, guard(6) channel USDC, guard(6) channel, open, memo, guard(6) buyer, guard(10) buyer USDC
+//   Solflare data request yCobCg (18 Nov): ..., transfer, memo, guard(6) buyer, guard(10) buyer USDC
 // A self-paid Phantom transfer the same day also carried a SetLoadedAccountsDataSizeLimit.
 import { describe, expect, it } from "vitest";
 import {
@@ -22,6 +25,7 @@ const LIGHTHOUSE = address("L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95");
 const COMPUTE_BUDGET = address("ComputeBudget111111111111111111111111111111");
 const MEMO = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const USDC = address("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+const CLOCK = address("SysvarC1ock11111111111111111111111111111111");
 const NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const BLOCKHASH = { blockhash: "11111111111111111111111111111111" as Blockhash, lastValidBlockHeight: 1n };
 
@@ -35,14 +39,17 @@ const on = (data: Uint8Array, ...accounts: Address[]): Instruction => ({
 const guard = (kind: number, size: number, accounts: Address[] = []): Instruction =>
   on(Uint8Array.from({ length: size }, (_, i) => (i === 0 ? kind : 3)), ...accounts);
 
-// Phantom's real guards (20 Nov 2026).
-const PHANTOM = {
-  noLamports: hex("06040100000000000000000000"), // lamports == 0: the buyer (no SOL), and the two new channel accounts
-  ownerSystemNoData: hex("06040203000001000000000000000000"), // owner == System, data length == 0: the fee payer, and the buyer after
-  tokenAccountState: hex("06040303010001a50000000000000000081aaa0f8d360f1bafc8704d5e0d1496bf121747016cb994beb1b54d2feef34c0e00a501"), // buyer USDC, before
-  tokenAccountAfter: hex("0a04030300000600000000000000000508"), // buyer USDC, after
+// Real wallet guards.
+const REAL = {
+  noLamports: hex("06040100000000000000000000"), // Phantom: lamports == 0 (buyer with no SOL, the two new channel accounts)
+  ownerSystemNoData: hex("06040203000001000000000000000000"), // Phantom: owner == System, data length == 0 (fee payer; buyer after)
+  tokenNoDelegate: hex("0a04030300000600000000000000000508"), // Phantom: no delegate, delegated amount <= 0, derived owner (treasury; buyer USDC after)
+  buyerUsdcBefore: hex("06040303010001a500000000000000000815ef36b441ae9f8cf8248c1acf0affd86fbd62220165d377200973f7def457c700a501"), // Phantom: owner Token, length 165, data hash
+  openBuyerUsdcBefore: hex("06040303010001a50000000000000000081aaa0f8d360f1bafc8704d5e0d1496bf121747016cb994beb1b54d2feef34c0e00a501"),
+  solflareBuyer: hex("06050300042f1800000000000403000001000000000000000000"), // Solflare: lamports, owner, data length on the buyer
+  solflareBuyerUsdc: hex("0a050608026910020000000000040300000600000000000000000001a09cdc7aa79d1c40733d890d4c0b81e5f28e8fceb6d58499f240398fea9c3dc100070000"), // includes "amount >= X"
 };
-/** SetLoadedAccountsDataSizeLimit, as Phantom sends it on a token transfer (4 MiB). */
+/** SetLoadedAccountsDataSizeLimit, as Phantom sends it on a self-paid token transfer (4 MiB). */
 const dataLimit: Instruction = { programAddress: COMPUTE_BUDGET, accounts: [], data: Uint8Array.of(4, 0, 0, 64, 0) };
 const budget = (units: number, microLamports: bigint): Instruction[] => {
   const limit = new Uint8Array(5);
@@ -54,17 +61,21 @@ const budget = (units: number, microLamports: bigint): Instruction[] => {
   return [{ programAddress: COMPUTE_BUDGET, accounts: [], data: limit }, { programAddress: COMPUTE_BUDGET, accounts: [], data: price }];
 };
 const memo: Instruction = { programAddress: MEMO, accounts: [], data: new TextEncoder().encode("0123456789abcdef") };
-type Who = { buyer: Address; buyerToken: Address; feePayer: Address };
+type Who = { buyer: Address; buyerToken: Address; feePayer: Address; treasuryToken: Address };
 
-// Lighthouse account-info checks, byte for byte as lighthouse-sdk 2.1.0 encodes them (kind 6 = 6, log level, count, checks).
+// Lighthouse checks, byte for byte as lighthouse-sdk 2.1.0 encodes them.
 const u64le = (v: bigint) => [...new Uint8Array(new BigUint64Array([v]).buffer)];
 const infoMulti = (...checks: number[][]) => Uint8Array.from([6, 4, checks.length, ...checks.flat()]);
+const tokenMulti = (...checks: number[][]) => Uint8Array.from([10, 4, checks.length, ...checks.flat()]);
 const lamports = (op: number, v: bigint) => [0, ...u64le(v), op]; // op: 0 ==, 1 !=, 2 >, 3 <, 4 >=, 5 <=
 const ownerIsSystem = [3, 0, 0];
+const ownerIsToken = [3, 1, 0];
 const noData = [1, ...u64le(0n), 0];
-/** Fee-payer checks no other settlement can break: owner, data length, flags, and the trivial "lamports >= 0". */
+const tokenAccountLength = [1, ...u64le(165n), 0];
+const tokenAmount = (op: number, v: bigint) => [2, ...u64le(v), op];
+/** Fee-payer checks no settlement can change: owner, data length, flags, the trivial "lamports >= 0". */
 const safeOnFeePayer = (fp: Address): Instruction[] => [
-  on(PHANTOM.ownerSystemNoData, fp),
+  on(REAL.ownerSystemNoData, fp),
   on(infoMulti(lamports(4, 0n)), fp),
   on(Uint8Array.from([5, 4, ...ownerIsSystem]), fp), // AssertAccountInfo, one check
   on(infoMulti([5, 1, 0], [6, 1, 0], [7, 0, 0]), fp), // signer, writable, not executable
@@ -94,9 +105,9 @@ type Around = { first?: Instruction[]; before?: Instruction[]; after?: Instructi
 async function dataRequest(around: (who: Who) => Around) {
   const [feePayer, buyer, payTo] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner(), generateKeyPairSigner()]);
   const [buyerToken] = await findAssociatedTokenPda({ mint: USDC, owner: buyer.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
-  const [destination] = await findAssociatedTokenPda({ mint: USDC, owner: payTo.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
-  const transfer = getTransferCheckedInstruction({ source: buyerToken, mint: USDC, destination, authority: buyer, amount: 2_600n, decimals: 6 });
-  const a = around({ buyer: buyer.address, buyerToken, feePayer: feePayer.address });
+  const [treasuryToken] = await findAssociatedTokenPda({ mint: USDC, owner: payTo.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+  const transfer = getTransferCheckedInstruction({ source: buyerToken, mint: USDC, destination: treasuryToken, authority: buyer, amount: 2_600n, decimals: 6 });
+  const a = around({ buyer: buyer.address, buyerToken, feePayer: feePayer.address, treasuryToken });
   const message = pipe(
     createTransactionMessage({ version: 0 }),
     (m) => setTransactionMessageFeePayer(feePayer.address, m),
@@ -109,20 +120,26 @@ async function dataRequest(around: (who: Who) => Around) {
   return { buyer: buyer.address, verify: () => facilitator.verify({ x402Version: 2, accepted: requirements, payload: { transaction } } as never, requirements as never) };
 }
 
-/** Phantom's guards around a transfer: the same kinds it puts around a channel open, plus its data-size limit. */
-const phantomAround = ({ buyer, buyerToken, feePayer }: Who): Around => ({
-  before: [on(PHANTOM.noLamports, buyer), on(PHANTOM.ownerSystemNoData, feePayer), on(PHANTOM.tokenAccountState, buyerToken), dataLimit],
-  after: [on(PHANTOM.ownerSystemNoData, buyer), on(PHANTOM.tokenAccountAfter, buyerToken)],
+/** Phantom's guards on a sponsored data request, byte for byte (4ft9Mzwp9d, 20 Nov). */
+const phantomDataRequest = ({ buyerToken, feePayer, treasuryToken }: Who): Around => ({
+  before: [on(REAL.tokenNoDelegate, treasuryToken), on(REAL.ownerSystemNoData, feePayer), on(REAL.buyerUsdcBefore, buyerToken)],
+  after: [on(REAL.tokenNoDelegate, buyerToken)],
 });
+const OFF_LIMITS = "invalid_exact_svm_payload_invalid_lighthouse_instruction";
 
 describe("a data request signed in Phantom (exact)", () => {
-  it("passes with Phantom's guards before and after the transfer, one reading the fee payer, plus a data-size limit", async () => {
-    const { verify, buyer } = await dataRequest(phantomAround);
+  it("passes exactly as Phantom sent it on 20 Nov: checks on our treasury, the fee payer and the buyer", async () => {
+    const { verify, buyer } = await dataRequest(phantomDataRequest);
     await expect(verify()).resolves.toMatchObject({ isValid: true, payer: buyer });
   });
 
-  it("still passes as Phantom sent it in October and Solflare does: memo, then 2 guards", async () => {
-    const { verify } = await dataRequest(({ buyer, buyerToken }) => ({ after: [guard(6, 26, [buyer]), guard(10, 64, [buyerToken])] }));
+  it("passes with Phantom's data-size limit after its guards", async () => {
+    const { verify } = await dataRequest((who) => ({ ...phantomDataRequest(who), before: [...phantomDataRequest(who).before!, dataLimit] }));
+    await expect(verify()).resolves.toMatchObject({ isValid: true });
+  });
+
+  it("still passes as Solflare sends it: memo, then checks on the buyer's wallet and USDC (an amount check included)", async () => {
+    const { verify } = await dataRequest(({ buyer, buyerToken }) => ({ after: [on(REAL.solflareBuyer, buyer), on(REAL.solflareBuyerUsdc, buyerToken)] }));
     await expect(verify()).resolves.toMatchObject({ isValid: true });
   });
 
@@ -139,17 +156,45 @@ describe("a data request signed in Phantom (exact)", () => {
     }
   });
 
+  it("lets our treasury be read only by checks no settlement can change, never its balance", async () => {
+    const safe = (t: Address) => [on(REAL.tokenNoDelegate, t), on(infoMulti(ownerIsToken, tokenAccountLength), t), on(tokenMulti([0, ...new Array(32).fill(7), 0], [4, 1, 0]), t)];
+    const unsafe = (t: Address) => [
+      on(tokenMulti(tokenAmount(5, 1_000_000n)), t), // amount <= what it holds now
+      on(tokenMulti([3, 0, 0], tokenAmount(4, 0n)), t), // even a harmless-looking amount check
+      on(Uint8Array.from([9, 4, ...tokenAmount(0, 5n)]), t), // AssertTokenAccount, one amount check
+      on(infoMulti(lamports(0, 2_039_280n)), t), // lamports == rent (anyone can send it lamports)
+      guard(2, 26, [t]), // raw data, which holds the amount
+      on(tokenMulti([9]), t), // an unknown token check
+    ];
+    for (let i = 0; i < safe(LIGHTHOUSE).length; i++) {
+      const { verify } = await dataRequest(({ treasuryToken }) => ({ before: [safe(treasuryToken)[i]!] }));
+      await expect(verify(), `safe #${i}`).resolves.toMatchObject({ isValid: true });
+    }
+    for (let i = 0; i < unsafe(LIGHTHOUSE).length; i++) {
+      const { verify } = await dataRequest(({ treasuryToken }) => ({ after: [unsafe(treasuryToken)[i]!] }));
+      await expect(verify(), `unsafe #${i}`).resolves.toMatchObject({ isValid: false, invalidReason: OFF_LIMITS });
+    }
+  });
+
+  it("refuses checks on any other account: the USDC mint, a sysvar, someone else's account", async () => {
+    const other = (await generateKeyPairSigner()).address;
+    for (const target of [USDC, CLOCK, other]) {
+      const { verify } = await dataRequest(() => ({ before: [on(REAL.noLamports, target)] }));
+      await expect(verify(), target).resolves.toMatchObject({ isValid: false, invalidReason: OFF_LIMITS });
+    }
+  });
+
   it("refuses Lighthouse kinds that are not account, mint or token assertions (memory, delta, clock, unknown)", async () => {
     for (const kind of [0, 1, 4, 15, 18]) {
       const { verify } = await dataRequest(() => ({ after: [guard(kind, 26)] }));
-      await expect(verify()).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_invalid_lighthouse_instruction" });
+      await expect(verify()).resolves.toMatchObject({ isValid: false, invalidReason: OFF_LIMITS });
     }
   });
 
   it("refuses more than 10 guards, a second data-size limit, and a guard before the compute budget", async () => {
-    const eleven = await dataRequest(() => ({ before: Array.from({ length: 6 }, () => guard(6, 26)), after: Array.from({ length: 5 }, () => guard(10, 27)) }));
-    const twoLimits = await dataRequest(() => ({ before: [dataLimit, guard(6, 26), dataLimit] }));
-    const tooEarly = await dataRequest(() => ({ first: [guard(6, 26)] }));
+    const eleven = await dataRequest(({ buyer }) => ({ before: Array.from({ length: 6 }, () => on(REAL.noLamports, buyer)), after: Array.from({ length: 5 }, () => on(REAL.noLamports, buyer)) }));
+    const twoLimits = await dataRequest(({ buyer }) => ({ before: [dataLimit, on(REAL.noLamports, buyer), dataLimit] }));
+    const tooEarly = await dataRequest(({ buyer }) => ({ first: [on(REAL.noLamports, buyer)] }));
     for (const { verify } of [eleven, twoLimits, tooEarly]) {
       await expect(verify()).resolves.toMatchObject({ isValid: false, invalidReason: "invalid_exact_svm_payload_transaction_instructions_length" });
     }
@@ -167,18 +212,21 @@ describe("a data request signed in Phantom (exact)", () => {
 const DEPOSIT = 55_000n;
 const OPEN_SLOT = 1_000n;
 const GRACE = 3_600;
-type Parts = { budget: Instruction[]; open: Instruction; memo: Instruction[]; channel: Address; channelToken: Address } & Who;
+type Parts = { budget: Instruction[]; open: Instruction; memo: Instruction[]; channel: Address; channelToken: Address; authorizer: Address } & Who;
 
 /** A question's channel open, rebuilt with its instructions laid out by `layout` and signed again by the buyer. */
 async function questionDeposit(layout: (parts: Parts) => Instruction[]) {
-  const [feePayer, buyer, authorizer] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner(), generateKeyPairSigner()]);
+  const [feePayer, buyer, authorizer, treasury] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner(), generateKeyPairSigner(), generateKeyPairSigner()]);
   const [buyerToken] = await findAssociatedTokenPda({ mint: USDC, owner: buyer.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+  const [treasuryToken] = await findAssociatedTokenPda({ mint: USDC, owner: treasury.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
   const built = await buildOpenPaymentChannelTransaction({
     payer: buyer, payee: feePayer.address, mint: USDC, authorizedSigner: authorizer.address, feePayer: feePayer.address,
     tokenProgram: TOKEN_PROGRAM_ADDRESS, deposit: DEPOSIT, gracePeriod: GRACE, openSlot: OPEN_SLOT, blockhash: BLOCKHASH,
     computeUnitLimit: 200_000, computeUnitPriceMicroLamports: 1,
   });
-  const wire = await reshape(built.transaction, buyer, (parts) => layout({ ...parts, buyer: buyer.address, buyerToken, feePayer: feePayer.address }));
+  const wire = await reshape(built.transaction, buyer, (parts) =>
+    layout({ ...parts, buyer: buyer.address, buyerToken, feePayer: feePayer.address, treasuryToken, authorizer: authorizer.address }),
+  );
   const verify = () => verifyOpenTransaction(wire, {
     authorizedSigner: authorizer.address, feePayer: feePayer.address, from: buyer.address, maxCap: DEPOSIT, mint: USDC,
     openSlot: OPEN_SLOT, payee: feePayer.address, recentSlot: OPEN_SLOT, recipients: [], tokenProgram: TOKEN_PROGRAM_ADDRESS,
@@ -187,7 +235,7 @@ async function questionDeposit(layout: (parts: Parts) => Instruction[]) {
   return { verify, channelId: built.channelId };
 }
 
-async function reshape(wire: string, buyer: KeyPairSigner, layout: (parts: Omit<Parts, keyof Who>) => Instruction[]) {
+async function reshape(wire: string, buyer: KeyPairSigner, layout: (parts: Pick<Parts, "budget" | "open" | "memo" | "channel" | "channelToken">) => Instruction[]) {
   const tx = getTransactionDecoder().decode(getBase64Encoder().encode(wire));
   const message = decompileTransactionMessage(getCompiledTransactionMessageDecoder().decode(tx.messageBytes));
   const ixs = message.instructions as Instruction[];
@@ -212,10 +260,10 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
   it("passes exactly as Phantom sent it on 20 Nov: 5 guards before the open (one reads the fee payer), 2 after", async () => {
     const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken, feePayer, channel, channelToken }) => [
       ...budget,
-      on(PHANTOM.noLamports, buyer), on(PHANTOM.ownerSystemNoData, feePayer), on(PHANTOM.tokenAccountState, buyerToken),
-      on(PHANTOM.noLamports, channelToken), on(PHANTOM.noLamports, channel),
+      on(REAL.noLamports, buyer), on(REAL.ownerSystemNoData, feePayer), on(REAL.openBuyerUsdcBefore, buyerToken),
+      on(REAL.noLamports, channelToken), on(REAL.noLamports, channel),
       open, ...memo,
-      on(PHANTOM.ownerSystemNoData, buyer), on(PHANTOM.tokenAccountAfter, buyerToken),
+      on(REAL.ownerSystemNoData, buyer), on(REAL.tokenNoDelegate, buyerToken),
     ]);
     await expect(verify()).resolves.toMatchObject({ channelId });
   });
@@ -234,15 +282,27 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
     }
   });
 
+  it("refuses checks on any account but the buyer's, the channel's and the fee payer: the mint, the authorizer, a treasury, a sysvar", async () => {
+    for (const pick of [() => USDC, (p: Parts) => p.authorizer, (p: Parts) => p.treasuryToken, () => CLOCK]) {
+      for (const where of ["before", "after"] as const) {
+        const bad = await questionDeposit((parts) => {
+          const g = on(REAL.noLamports, pick(parts));
+          return where === "before" ? [...parts.budget, g, parts.open, ...parts.memo] : [...parts.budget, parts.open, ...parts.memo, g];
+        });
+        await expect(bad.verify(), where).rejects.toThrow(/may check only the buyer's accounts, the channel being opened, or stable facts about the fee payer/);
+      }
+    }
+  });
+
   it("passes with a data-size limit after the guards or among the compute-budget instructions", async () => {
-    const after = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, on(PHANTOM.noLamports, buyer), dataLimit, open, ...memo]);
-    const among = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, dataLimit, on(PHANTOM.noLamports, buyer), open, ...memo]);
+    const after = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, on(REAL.noLamports, buyer), dataLimit, open, ...memo]);
+    const among = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, dataLimit, on(REAL.noLamports, buyer), open, ...memo]);
     await expect(after.verify()).resolves.toMatchObject({ channelId: after.channelId });
     await expect(among.verify()).resolves.toMatchObject({ channelId: among.channelId });
   });
 
-  it("still passes as Phantom sent it before November and Solflare does: memo, then 2 guards", async () => {
-    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken }) => [...budget, open, ...memo, guard(6, 26, [buyer]), guard(10, 64, [buyerToken])]);
+  it("still passes as Phantom sent it before November and Solflare does: memo, then checks on the buyer", async () => {
+    const { verify, channelId } = await questionDeposit(({ budget, open, memo, buyer, buyerToken }) => [...budget, open, ...memo, on(REAL.solflareBuyer, buyer), on(REAL.solflareBuyerUsdc, buyerToken)]);
     await expect(verify()).resolves.toMatchObject({ channelId });
   });
 
@@ -254,14 +314,14 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
   });
 
   it("refuses more than 10 guards in all", async () => {
-    const { verify } = await questionDeposit(({ budget, open, memo }) => [
-      ...budget, ...Array.from({ length: 8 }, () => guard(6, 26)), open, ...memo, guard(6, 26), guard(10, 27), guard(6, 26),
+    const { verify } = await questionDeposit(({ budget, open, memo, buyer }) => [
+      ...budget, ...Array.from({ length: 8 }, () => on(REAL.noLamports, buyer)), open, ...memo, ...Array.from({ length: 3 }, () => on(REAL.noLamports, buyer)),
     ]);
     await expect(verify()).rejects.toThrow(/at most 10 Lighthouse instructions/);
   });
 
   it("refuses a second data-size limit", async () => {
-    const { verify } = await questionDeposit(({ budget, open, memo }) => [...budget, dataLimit, guard(6, 26), dataLimit, open, ...memo]);
+    const { verify } = await questionDeposit(({ budget, open, memo, buyer }) => [...budget, dataLimit, on(REAL.noLamports, buyer), dataLimit, open, ...memo]);
     await expect(verify()).rejects.toThrow(/expected payment-channels open after the ComputeBudget prefix/);
   });
 

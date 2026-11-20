@@ -1,39 +1,53 @@
 // Lets the facilitator accept payments signed in Phantom. Runs after every npm install.
 //
-// Phantom now wraps the payment instruction in Lighthouse guards and adds a compute-budget
-// instruction. Seen on mainnet, 20 Nov 2026, on a self-paid token transfer (P2UUZAeV...):
+// Phantom now wraps the payment instruction in Lighthouse guards (assertions that make the
+// transaction fail if an account is not as the wallet simulated it) and sometimes adds a
+// compute-budget instruction. Seen on mainnet, 20 Nov 2026:
 //
-//   limit, price, guard(10), guard(6), SetLoadedAccountsDataSizeLimit, TransferChecked, memo, guard(6), guard(10)
-//
-// and a real Phantom question deposit, captured from our own Worker log the same day:
-//
-//   limit, price, guard(6) buyer, guard(6) fee payer, guard(6) buyer USDC, guard(6) channel USDC,
-//   guard(6) channel, open, memo, guard(6) buyer, guard(10) buyer USDC
+//   self-paid transfer (P2UUZAeV...): limit, price, guard(10), guard(6), SetLoadedAccountsDataSizeLimit,
+//     TransferChecked, memo, guard(6), guard(10)
+//   our data request (4ft9Mzwp9d...): limit, price, guard(10) our treasury USDC, guard(6) fee payer,
+//     guard(6) buyer USDC, TransferChecked, memo, guard(10) buyer USDC
+//   our question deposit (captured from our Worker log): limit, price, guard(6) buyer, guard(6) fee
+//     payer, guard(6) buyer USDC, guard(6) channel USDC, guard(6) channel, open, memo, guard(6) buyer,
+//     guard(10) buyer USDC
 //
 // @x402/svm 2.28 accepts guards only after the payment and refuses any compute-budget instruction
 // other than the limit and the price, so every Phantom data request (exact) and question deposit
 // (the upto channel open) failed verification. 2.31 refuses this layout too and needs @solana/kit 8,
 // so until that upgrade this script patches 2.28.
 //
-// The rules after the patch, for both schemes:
+// We pay the network fee of every transaction we submit, even one that fails on chain, and a guard
+// is exactly an instruction that can make a transaction fail. So the rules keep out every guard
+// that something other than the buyer can break:
 //  - Lighthouse instructions may sit anywhere after the compute-unit limit and price, at most 10
-//    (a real Phantom question deposit carries 7: 5 before the open, 2 after; the fee guard and the
-//    transaction size limit bound the cost, so the cap is only a sanity bound). After a channel
-//    open the stock limit of 4 optional instructions (memo included) still applies on top;
+//    (the question deposit above carries 7; the fee guard and the transaction size limit bound the
+//    cost, so the cap is only a sanity bound). After a channel open the stock limit on optional
+//    instructions still applies on top: at most 4 (memo included), or 5 when a receiver-binding
+//    memo is expected;
 //  - each must be an assertion on an account, a mint or a token account (Lighthouse kinds 2, 3,
 //    5-10). Refused: MemoryWrite and MemoryClose (0, 1), which move lamports; AccountDelta (4), which
-//    needs a MemoryWrite; stake and loader checks (11-14); the clock check (15), which can pass the
-//    facilitator's simulation and fail on chain with the fee payer paying; the tree checks (16, 17);
-//  - a guard may list the facilitator's own address only to check something that no other
-//    payment settling at the same time can change: an account-info assertion (kinds 5, 6, with
-//    1 to 8 checks) whose every check is the owner (==), the data length, the signer, writable or
-//    executable flags, or the trivial "lamports >= 0". Phantom sends exactly "owner System, data
-//    length 0" on the fee payer before a question deposit (captured from a real Phantom payment
-//    on 20 Nov). Any real balance check is refused: every settlement LOWERS the fee payer's
-//    balance, so a buyer could send many payments at once that each assert "balance >= nearly what
-//    it is now"; one lands, the rest fail on chain, and the fee payer pays for each. Every other
-//    kind that lists the fee payer is refused too (stock 2.28 let any Lighthouse instruction after
-//    an exact transfer list it);
+//    needs a MemoryWrite; stake and loader checks (11-14); the clock check (15), which can pass our
+//    simulation and fail on chain a slot later; the tree checks (16, 17);
+//  - a guard may only check accounts that no other payment changes behind our back: the buyer's
+//    own wallet and USDC account, the two channel accounts a question deposit creates (on a
+//    top-up the channel already exists and our settlements change it, so there only the buyer's
+//    two accounts), our fee payer and, on a data request, our treasury USDC account. Anything
+//    else is refused: the USDC mint (its supply moves all the time), sysvars, other people's
+//    accounts. The buyer can still make its OWN payments fail on chain by asserting its own
+//    accounts and changing them (several payments at once, each guarding its USDC account),
+//    costing us one network fee per failure; real wallets guard exactly those accounts, so that
+//    cannot be refused here. Stock 2.28 allowed it after the transfer too;
+//  - on our fee payer and treasury only checks no settlement can change are accepted, because
+//    every settlement LOWERS the fee payer's balance and RAISES the treasury's: a buyer could send
+//    many payments at once that each assert "balance is what it is now"; one lands, the rest fail
+//    on chain, and we pay for each. Accepted: account-info checks (kinds 5, 6) of the owner (==),
+//    the data length, the signer, writable and executable flags and the trivial "lamports >= 0";
+//    and on the treasury also token-account checks (kinds 9, 10) of everything except the amount
+//    (mint, owner, delegate, state, is-native, delegated amount, close authority, derived owner).
+//    Phantom sends exactly such checks: "owner System, data length 0" on the fee payer and
+//    "no delegate, delegated amount <= 0, derived owner" on the treasury. Stock 2.28 let any
+//    Lighthouse instruction after an exact transfer list any account, our fee payer included;
 //  - one SetLoadedAccountsDataSizeLimit is allowed after the limit and price; it changes no fee;
 //  - everything else (compute budget, the transfer or the open, memo, amounts, accounts) is
 //    checked exactly as before, in the same order.
@@ -45,7 +59,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MARK = "afriradar-patch:lighthouse-guards:v6";
+const MARK = "afriradar-patch:lighthouse-guards:v8";
 const ANY_MARK = "afriradar-patch:lighthouse-guards";
 const WRITTEN_FOR = "2.28.0";
 const root = fileURLToPath(new URL("../node_modules/@x402/svm/", import.meta.url));
@@ -87,7 +101,8 @@ const RULES = [
   "function afriradarIsGuard(data) {",
   "  return !!data && data.length > 0 && AFRIRADAR_GUARD_KINDS.has(data[0]);",
   "}",
-  "function afriradarReadsFeePayerSafely(data) {",
+  // Account-info checks (5, 6) that no settlement can change: owner ==, data length, flags, lamports >= 0.
+  "function afriradarReadsInfoSafely(data) {",
   "  if (!data || (data[0] !== 5 && data[0] !== 6)) return false;",
   "  let o = 2;",
   "  let count = 1;",
@@ -119,6 +134,38 @@ const RULES = [
   "  }",
   "  return o === data.length;",
   "}",
+  // Token-account checks (9, 10) that no settlement can change: everything but the amount (tag 2).
+  "function afriradarReadsTokenAccountSafely(data) {",
+  "  if (!data || (data[0] !== 9 && data[0] !== 10)) return false;",
+  "  let o = 2;",
+  "  let count = 1;",
+  "  if (data[0] === 10) {",
+  "    count = data[o++];",
+  "    if (!(count >= 1 && count <= 9)) return false;",
+  "  }",
+  "  for (let k = 0; k < count; k += 1) {",
+  "    const tag = data[o++];",
+  "    if (tag === 0 || tag === 1) {",
+  "      o += 33;",
+  "    } else if (tag === 3 || tag === 7) {",
+  "      const some = data[o++];",
+  "      if (some !== 0 && some !== 1) return false;",
+  "      o += (some ? 32 : 0) + 1;",
+  "    } else if (tag === 4) {",
+  "      o += 2;",
+  "    } else if (tag === 5) {",
+  "      const some = data[o++];",
+  "      if (some !== 0 && some !== 1) return false;",
+  "      o += (some ? 8 : 0) + 1;",
+  "    } else if (tag === 6) {",
+  "      o += 9;",
+  "    } else if (tag !== 8) {",
+  "      return false;",
+  "    }",
+  "    if (o > data.length) return false;",
+  "  }",
+  "  return o === data.length;",
+  "}",
   "function afriradarIsDataLimit(data) {",
   "  return !!data && data.length === 5 && data[0] === 4;",
   "}",
@@ -135,9 +182,9 @@ if (!patched(exact, exactPath)) {
     "var ExactSvmScheme = class {",
     RULES +
       [
-        "function afriradarSplitGuards(instructions, facilitatorAddresses) {",
+        "function afriradarSplitGuards(instructions) {",
         "  const payment = [];",
-        "  let guards = 0;",
+        "  const guards = [];",
         "  let dataLimits = 0;",
         "  for (let index = 0; index < instructions.length; index += 1) {",
         "    const ix = instructions[index];",
@@ -148,23 +195,35 @@ if (!patched(exact, exactPath)) {
         "      payment.push(ix);",
         "      continue;",
         "    }",
-        "    if (index < 2) return { payment, error: ErrTransactionInstructionsLength };",
+        "    if (index < 2) return { payment, guards, error: ErrTransactionInstructionsLength };",
         "    if (isDataLimit) {",
         "      dataLimits += 1;",
-        "      if (!afriradarIsDataLimit(ix.data) || dataLimits > 1) return { payment, error: ErrTransactionInstructionsLength };",
+        "      if (!afriradarIsDataLimit(ix.data) || dataLimits > 1) return { payment, guards, error: ErrTransactionInstructionsLength };",
         "      continue;",
         "    }",
-        '    if (!afriradarIsGuard(ix.data)) return { payment, error: "invalid_exact_svm_payload_invalid_lighthouse_instruction" };',
-        "    if (facilitatorAddresses && (ix.accounts ?? []).some((account) => facilitatorAddresses.includes(account.address.toString())) && !afriradarReadsFeePayerSafely(ix.data)) {",
-        "      return { payment, error: ErrFeePayerTransferringFunds };",
-        "    }",
-        "    guards += 1;",
+        '    if (!afriradarIsGuard(ix.data)) return { payment, guards, error: "invalid_exact_svm_payload_invalid_lighthouse_instruction" };',
+        "    guards.push(ix);",
         "  }",
-        "  return guards > AFRIRADAR_MAX_GUARDS ? { payment, error: ErrTransactionInstructionsLength } : { payment, error: null };",
+        "  return guards.length > AFRIRADAR_MAX_GUARDS ? { payment, guards, error: ErrTransactionInstructionsLength } : { payment, guards, error: null };",
+        "}",
+        "function afriradarCheckTransferGuardTargets(guards, buyerAccounts, payTo, facilitatorAddresses) {",
+        "  for (const ix of guards) {",
+        "    for (const account of ix.accounts ?? []) {",
+        "      const address = account.address.toString();",
+        "      if (buyerAccounts.includes(address)) continue;",
+        "      if (facilitatorAddresses.includes(address)) {",
+        "        if (afriradarReadsInfoSafely(ix.data)) continue;",
+        "        return ErrFeePayerTransferringFunds;",
+        "      }",
+        "      if (address === payTo && (afriradarReadsInfoSafely(ix.data) || afriradarReadsTokenAccountSafely(ix.data))) continue;",
+        '      return "invalid_exact_svm_payload_invalid_lighthouse_instruction";',
+        "    }",
+        "  }",
+        "  return null;",
         "}",
         "var ExactSvmScheme = class {",
       ].join("\n"),
-    "exact: guard helper",
+    "exact: guard helpers",
   );
   exact = once(
     exact,
@@ -191,13 +250,31 @@ if (!patched(exact, exactPath)) {
     ].join("\n"),
     [
       "  async verifyStaticPath(transaction, decompiled, exactSvmPayload, requirements, signerAddresses) {",
-      "    const split = afriradarSplitGuards(decompiled.instructions ?? [], signerAddresses);",
+      "    const split = afriradarSplitGuards(decompiled.instructions ?? []);",
       "    if (split.error) {",
       '      return { isValid: false, invalidReason: split.error, payer: "" };',
       "    }",
       "    const instructions = split.payment;",
     ].join("\n"),
-    "exact: verifyStaticPath",
+    "exact: verifyStaticPath split",
+  );
+  exact = once(
+    exact,
+    ["    const amount = parsedTransfer.data.amount;", "    if (amount !== BigInt(requirements.amount)) {"].join("\n"),
+    [
+      "    const afriradarTargets = afriradarCheckTransferGuardTargets(",
+      "      split.guards,",
+      "      [parsedTransfer.accounts.source.address.toString(), authorityAddress],",
+      "      destATA,",
+      "      signerAddresses",
+      "    );",
+      "    if (afriradarTargets) {",
+      "      return { isValid: false, invalidReason: afriradarTargets, payer };",
+      "    }",
+      "    const amount = parsedTransfer.data.amount;",
+      "    if (amount !== BigInt(requirements.amount)) {",
+    ].join("\n"),
+    "exact: guard targets",
   );
   writeFileSync(exactPath, exact);
   console.log("patch-x402-svm: exact facilitator patched");
@@ -241,6 +318,7 @@ if (!patched(chunk, chunkPath)) {
     [
       "    i += 1;",
       "  }",
+      "  const afriradarOpenGuards = [];",
       "  let afriradarGuardsBeforeOpen = 0;",
       "  while (i < instructions.length) {",
       "    const preIx = instructions[i];",
@@ -256,7 +334,8 @@ if (!patched(chunk, chunkPath)) {
       "    if (!afriradarIsGuard(preIx.data)) {",
       `      throw new Error("verifyOpenTransaction: ${NOT_A_GUARD}");`,
       "    }",
-      '    if (!afriradarReadsFeePayerSafely(preIx.data)) rejectFeePayerOutsideOpen(preIx, staticAccounts, feePayer, "Lighthouse");',
+      '    if (!afriradarReadsInfoSafely(preIx.data)) rejectFeePayerOutsideOpen(preIx, staticAccounts, feePayer, "Lighthouse");',
+      "    afriradarOpenGuards.push(preIx);",
       "    afriradarGuardsBeforeOpen += 1;",
       "    if (afriradarGuardsBeforeOpen > AFRIRADAR_MAX_GUARDS) {",
       "      throw new Error(`verifyOpenTransaction: at most ${AFRIRADAR_MAX_GUARDS} Lighthouse instructions are allowed in an open transaction`);",
@@ -287,11 +366,41 @@ if (!patched(chunk, chunkPath)) {
       "      if (!afriradarIsGuard(ix.data)) {",
       `        throw new Error("verifyOpenTransaction: ${NOT_A_GUARD}");`,
       "      }",
-      '      if (!afriradarReadsFeePayerSafely(ix.data)) rejectFeePayerOutsideOpen(ix, staticAccounts, feePayer, "Lighthouse");',
+      '      if (!afriradarReadsInfoSafely(ix.data)) rejectFeePayerOutsideOpen(ix, staticAccounts, feePayer, "Lighthouse");',
+      "      afriradarOpenGuards.push(ix);",
     ].join("\n"),
     "upto: guards after the open",
   );
-  chunk = chunk.slice(0, start) + RULES + fn + chunk.slice(end);
+  fn = once(
+    fn,
+    ["  return {", "    accountIndices: openInstruction.accountIndices ?? [],"].join("\n"),
+    [
+      '  afriradarCheckOpenGuardTargets(afriradarOpenGuards, openInstruction, staticAccounts, feePayer, instructionName === "open" ? [0, 5, 6, 7] : instructionName === "top_up" ? [0, 2] : [0]);',
+      "  return {",
+      "    accountIndices: openInstruction.accountIndices ?? [],",
+    ].join("\n"),
+    "upto: guard targets",
+  );
+  const OPEN_TARGETS = [
+    // Accounts a guard may check, by the instruction's account slots (`ownSlots`): on an open the
+    // buyer's wallet (0) and USDC account (6) and the channel (5) and channel USDC account (7) the
+    // open creates; on a top-up only the buyer's wallet (0) and USDC account (2). The fee payer
+    // only for checks no settlement can change. Anything else is refused.
+    "function afriradarCheckOpenGuardTargets(guards, openInstruction, staticAccounts, feePayer, ownSlots) {",
+    "  const slots = openInstruction.accountIndices ?? [];",
+    "  const own = new Set(ownSlots.map((slot) => staticAccounts[slots[slot]]).filter((a) => !!a));",
+    "  for (const guard of guards) {",
+    "    for (const accountIndex of guard.accountIndices ?? []) {",
+    "      const account = staticAccounts[accountIndex];",
+    "      if (own.has(account)) continue;",
+    "      if (account === feePayer && afriradarReadsInfoSafely(guard.data)) continue;",
+    "      throw new Error(`verifyOpenTransaction: a Lighthouse instruction may check only the buyer's accounts, the channel being opened, or stable facts about the fee payer; it lists ${account}`);",
+    "    }",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  chunk = chunk.slice(0, start) + RULES + OPEN_TARGETS + fn + chunk.slice(end);
   writeFileSync(chunkPath, chunk);
   console.log(`patch-x402-svm: upto open verifier patched (${chunkName})`);
 }
