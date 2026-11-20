@@ -1,7 +1,7 @@
 // Lets the facilitator accept payments signed in Phantom. Runs after every npm install.
 //
 // Phantom now wraps the payment instruction in Lighthouse guards and adds a compute-budget
-// instruction. Seen on mainnet, 20 Nov 2026 (e.g. transaction P2UUZAeV...):
+// instruction. Seen on mainnet, 20 Nov 2026, on a self-paid token transfer (P2UUZAeV...):
 //
 //   limit, price, guard(10), guard(6), SetLoadedAccountsDataSizeLimit, TransferChecked, memo, guard(6), guard(10)
 //
@@ -18,7 +18,8 @@
 // The rules after the patch, for both schemes:
 //  - Lighthouse instructions may sit anywhere after the compute-unit limit and price, at most 10
 //    (a real Phantom question deposit carries 7: 5 before the open, 2 after; the fee guard and the
-//    transaction size limit bound the cost, so the cap is only a sanity bound);
+//    transaction size limit bound the cost, so the cap is only a sanity bound). After a channel
+//    open the stock limit of 4 optional instructions (memo included) still applies on top;
 //  - each must be an assertion on an account, a mint or a token account (Lighthouse kinds 2, 3,
 //    5-10). Refused: MemoryWrite and MemoryClose (0, 1), which move lamports; AccountDelta (4), which
 //    needs a MemoryWrite; stake and loader checks (11-14); the clock check (15), which can pass the

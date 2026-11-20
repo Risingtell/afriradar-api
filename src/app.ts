@@ -178,7 +178,7 @@ export async function createApp(deps: Deps) {
   // Only refusals of the transaction's layout (the instructions a wallet added), not amounts, expiry,
   // RPC, simulation or blockhash trouble, and at most 20 a minute per isolate, so a stream of junk
   // payments cannot flood the log.
-  const REFUSAL = /^invalid_exact_svm_payload_(transaction_instructions|invalid_lighthouse|transaction_fee_payer|unknown_|no_transfer)|verifyOpenTransaction:/;
+  const REFUSAL = /^invalid_exact_svm_payload_(transaction_instructions|invalid_lighthouse|transaction_fee_payer|unknown_|no_transfer|memo_|excessive_signers|missing_fee_payer)|verifyOpenTransaction:/;
   let logWindow = { minute: 0, count: 0 };
   const logRefused = (stage: "verify" | "settle", payload: { payload?: unknown }, req: { scheme: string; network: string }, why: string) => {
     if (!REFUSAL.test(why)) return;
