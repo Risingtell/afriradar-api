@@ -4,7 +4,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { FacilitatorClient, RoutesConfig } from "@x402/core/server";
-import type { Network, PaymentRequired, PaymentRequirements } from "@x402/core/types";
+import type { Network, PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/hono";
 import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { ExactSvmScheme as ExactServer } from "@x402/svm/exact/server";
@@ -43,6 +43,8 @@ export class MainnetUptoServer extends UptoServer {
 export type Deps = {
   db: Db;
   facilitator: FacilitatorClient;
+  /** Told when the chain shows that a payment whose settle was unconfirmed landed, so the payer lock (src/netfee.ts) frees its account. */
+  landed?: (payload: PaymentPayload, requirements: PaymentRequirements, phase: string) => Promise<void>;
   llm: Llm;
   treasury: string;
   authorizer: MessagePartialSigner;
@@ -214,29 +216,40 @@ export async function createApp(deps: Deps) {
       });
     })
     // A "settlement_pending" answer means the transaction was broadcast but its confirmation was
-    // not seen (often an RPC rate limit). The buyer may already have paid, so read the chain
-    // before withholding what they bought. Recovered only when the treasury really received it.
+    // not seen (often an RPC rate limit); so does one whose pending record could not be written.
+    // The buyer may already have paid, so read the chain before withholding what they bought.
+    // Recovered only when the treasury really received it.
     .onSettleFailure(async (ctx) => {
-      const err = ctx.error as Error & { errorReason?: string; transaction?: string; payer?: string };
+      const err = ctx.error as Error & { errorReason?: string; errorMessage?: string; transaction?: string; payer?: string };
       const tx = err.transaction;
       const route = pathOf(ctx.paymentPayload.resource?.url);
       const network = ctx.requirements.network;
-      if (err.errorReason !== "settlement_pending" || !tx) {
+      // Refused before anything was sent (an earlier payment from the account is still in flight, or the
+      // paying account is named through a lookup table): no payment happened, so none goes in the
+      // ledger. Logged, so a buyer's report of a failed payment can be matched.
+      if (err.errorReason === "payer_busy" || err.errorReason === "payment_account_in_lookup_table") {
+        console.warn(JSON.stringify({ refused: "settle", why: err.errorReason, network, route }));
+        return;
+      }
+      const broadcast = err.errorReason === "settlement_pending" || (err.errorMessage ?? "").startsWith("settlement_pending, but failed to persist");
+      if (!broadcast || !tx) {
         logRefused("settle", ctx.paymentPayload, ctx.requirements, err.message || err.errorReason || "");
         // err.message is "reason: explanation"; the reason code alone does not say what to fix.
         await record({ id: `${tx || crypto.randomUUID()}:failed`, tx: tx || null, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "failed", detail: err.message || err.errorReason });
         return;
       }
       const chain = await readChainOn(network)(tx);
+      // Landed, confirmed or failed: it cannot land again, so the buyer's next payment need not wait for it.
+      if (chain.status !== "unknown") await deps.landed?.(ctx.paymentPayload as PaymentPayload, ctx.requirements as PaymentRequirements, ctx.phase).catch(() => undefined);
       const expected = BigInt(ctx.requirements.scheme === "upto" ? 1 : ctx.requirements.amount);
       if (chain.status === "confirmed" && chain.received >= expected) {
-        await record({ id: `${tx}:settled`, tx, network, route, scheme: ctx.requirements.scheme, amount: chain.received.toString(), payer: err.payer, status: "settled", detail: "recovered from chain after settlement_pending" });
+        await record({ id: `${tx}:settled`, tx, network, route, scheme: ctx.requirements.scheme, amount: chain.received.toString(), payer: err.payer, status: "settled", detail: `recovered from chain after ${err.errorReason === "settlement_pending" ? "settlement_pending" : "a broadcast whose pending record was not saved"}` });
         return {
           recovered: true as const,
           result: { success: true, transaction: tx, network: ctx.requirements.network, payer: err.payer, amount: chain.received.toString() },
         };
       }
-      await record({ id: `${tx}:pending`, tx, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "pending", detail: `chain says ${chain.status}; redeem at /v1/redeem/${tx}` });
+      await record({ id: `${tx}:pending`, tx, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "pending", detail: ctx.requirements.scheme === "exact" ? `chain says ${chain.status}; redeem at /v1/redeem/${tx}` : `chain says ${chain.status}` });
     });
   resourceServer.registerExtension(bazaarResourceServerExtension);
   await resourceServer.initialize();

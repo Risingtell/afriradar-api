@@ -1,7 +1,6 @@
 // Cloudflare Worker entry. One Worker hosts the API, its x402 facilitator and the scheduled jobs.
 import { createKeyPairSignerFromBytes, type KeyPairSigner } from "@solana/kit";
 import { x402Facilitator } from "@x402/core/facilitator";
-import type { FacilitatorClient } from "@x402/core/server";
 import type { SupportedResponse } from "@x402/core/types";
 import type { Network } from "@x402/core/types";
 import { createRpcClient, toFacilitatorSvmSigner } from "@x402/svm";
@@ -18,7 +17,9 @@ import { ingestKenya } from "./data/kenya.js";
 import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
 import { kindsAt, runMonitor } from "./monitor.js";
 import { jsonRpc } from "./reconcile.js";
-import { feeGuard, solUsdReader, UPTO_OPEN_LIMITS } from "./netfee.js";
+import { feeGuard, LOCK_WAIT, solUsdReader, UPTO_OPEN_LIMITS } from "./netfee.js";
+import { payerLock, sweepPayerLocks } from "./payerlock.js";
+import { watchingRefusals } from "./sends.js";
 
 export type Env = {
   DB: Parameters<typeof d1>[0];
@@ -39,6 +40,7 @@ export type Env = {
 const MONITOR_CRON = "41 * * * *"; // wrangler.toml [triggers]
 const signerFrom = (json: string) => createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(json)));
 
+
 type Built = { app: Awaited<ReturnType<typeof createApp>>; upto: UptoFacilitator; db: Db; demoSigner?: KeyPairSigner; networks: Network[] };
 let built: Promise<Built> | undefined;
 
@@ -47,10 +49,13 @@ async function build(env: Env): Promise<Built> {
   const [feePayer, authorizer]: KeyPairSigner[] = await Promise.all([signerFrom(env.FACILITATOR_KEY), signerFrom(env.AUTHORIZER_KEY)]);
   const networks = [NETWORK, ...(env.MAINNET_RPC_URL ? [MAINNET] : [])] as Network[];
   // One fee payer on both networks, each read and sent through its own RPC.
-  const svm = toFacilitatorSvmSigner(feePayer, {
+  const signer = toFacilitatorSvmSigner(feePayer, {
     [NETWORK]: createRpcClient(NETWORK as Network, env.RPC_URL),
     ...(env.MAINNET_RPC_URL ? { [MAINNET]: createRpcClient(MAINNET as Network, env.MAINNET_RPC_URL) } : {}),
   });
+  // The sends the RPC refused in the last two minutes, by transaction fingerprint, for the payer lock.
+  const refusedSends = new Map<string, number>();
+  const svm = watchingRefusals(signer, refusedSends);
   const upto = new UptoFacilitator(svm, {
     channelStorage: new D1ChannelStorage(db),
     pendingSettlementStore: new D1PendingStore(db),
@@ -60,16 +65,19 @@ async function build(env: Env): Promise<Built> {
   });
   const facilitator = new x402Facilitator().register(networks, new ExactFacilitator(svm)).register(networks, upto);
   // In-process: the resource server calls the facilitator directly, no HTTP hop. On mainnet the
-  // guard refuses, before we sign, any payment whose transaction costs more in fees than its price covers.
-  const client: FacilitatorClient = feeGuard({
+  // guard refuses, before we sign, any payment whose transaction costs more in fees than its price
+  // covers, and sends one account's payments one at a time (payerLock), so a buyer cannot make
+  // several of its own payments fail on chain at our cost.
+  const client = feeGuard({
     verify: (p, r) => facilitator.verify(p, r),
     settle: (p, r) => facilitator.settle(p, r),
     getSupported: async () => facilitator.getSupported() as SupportedResponse,
-  }, MAINNET);
+  }, MAINNET, payerLock(db), LOCK_WAIT, (fp) => refusedSends.has(fp));
   const demoSigner = env.DEMO_BUYER_KEY ? await signerFrom(env.DEMO_BUYER_KEY) : undefined;
   const app = await createApp({
     db,
     facilitator: client,
+    landed: client.landed,
     llm: workersAi(env.AI, env.AI_MODEL),
     treasury: env.TREASURY,
     authorizer,
@@ -140,6 +148,7 @@ export default {
         } catch (e) {
           console.error("kenya ingest failed", e); // Nigeria above is already stored; Kenya retries tomorrow
         }
+        await sweepPayerLocks(db, at.getTime()).catch((e) => console.error("payer lock sweep failed", e));
         await cleanup(NETWORK as Network);
       })(),
     );
