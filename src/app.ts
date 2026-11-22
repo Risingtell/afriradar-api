@@ -335,9 +335,11 @@ export async function createApp(deps: Deps) {
   // After cors, so a refusal carries the CORS headers a browser needs to read it.
   const limit = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: `request bodies are limited to ${MAX_BODY_BYTES / 1024} KB` }, 413) });
   app.post("*", async (c, next) => {
+    let passed = false;
     try {
-      return await limit(c, next);
-    } catch {
+      return await limit(c, () => ((passed = true), next()));
+    } catch (e) {
+      if (passed) throw e; // a later handler's failure, not the body read
       return c.json({ error: "could not read the request body" }, 400);
     }
   });

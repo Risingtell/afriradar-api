@@ -186,9 +186,15 @@ describe("hosted MCP server", () => {
   it("refuses an oversized paid question before the payment is looked at", async () => {
     const calls: string[] = [];
     const paid = await build(true, false, undefined, calls);
-    const body = JSON.stringify({ question: "x".repeat(MAX_BODY_BYTES) });
-    const signature = Buffer.from(JSON.stringify({ x402Version: 2, accepted: { network: NETWORK } })).toString("base64");
-    const res = await paid.fetch(new Request(`https://api.afriradar.com${PRODUCTS.ask.path}`, {
+    const url = `https://api.afriradar.com${PRODUCTS.ask.path}`;
+    // A payment for this very route and a valid question padded past the cap: only the cap can stop it
+    // before the facilitator is asked.
+    const question = "Which money market fund is the largest this week?";
+    const challenge = await paid.fetch(new Request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) }));
+    const required = JSON.parse(Buffer.from(challenge.headers.get("PAYMENT-REQUIRED") as string, "base64").toString("utf8"));
+    const signature = Buffer.from(JSON.stringify({ x402Version: 2, accepted: required.accepts[0], resource: required.resource, payload: {} })).toString("base64");
+    const body = JSON.stringify({ question, pad: "x".repeat(MAX_BODY_BYTES) });
+    const res = await paid.fetch(new Request(url, {
       method: "POST",
       headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)), "PAYMENT-SIGNATURE": signature },
       body,
