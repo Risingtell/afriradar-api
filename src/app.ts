@@ -2,6 +2,7 @@
 // secrets into it; tests wire sqlite and fakes. Payments are x402 on Solana, settled by our own
 // facilitator, and every settlement is written to a public ledger anyone can check on chain.
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import type { FacilitatorClient, RoutesConfig } from "@x402/core/server";
 import type { Network, PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
@@ -79,6 +80,8 @@ export type Deps = {
 
 export const MAINNET_ASKS_PER_HOUR = 30;
 export const AGENT_CHECKS_PER_HOUR = 60;
+/** The largest request body accepted: every route takes small JSON. */
+export const MAX_BODY_BYTES = 128 * 1024;
 /** Redeems per visitor per hour: each one reads the chain, up to 8 times. */
 export const REDEEMS_PER_HOUR = 30;
 /** How long after a payment it can be redeemed: far longer than a Solana transaction can take to land. */
@@ -345,6 +348,10 @@ export async function createApp(deps: Deps) {
   );
 
   const app = new Hono();
+  // Every body this API takes is small JSON (a question, an MCP call, an address). Refusing anything
+  // larger, even sent without a length, keeps a huge body from reaching any parser (GHSA-mrhx-c7xc-m3w5
+  // lets a large enough array exhaust the memory of the zod copy the x402 libraries still use).
+  app.use("*", bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: `request bodies are limited to ${MAX_BODY_BYTES / 1024} KB` }, 413) }));
   app.use("*", cors({ origin: "*", exposeHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"], allowHeaders: ["Content-Type", "PAYMENT-SIGNATURE", "X-PAYMENT", AGENT_WALLET_HEADER] }));
   app.onError((e, c) => {
     if (e instanceof AskError) return c.json({ error: e.message }, e.status);
