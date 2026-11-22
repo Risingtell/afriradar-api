@@ -10,7 +10,7 @@ import type { Network, SupportedResponse } from "@x402/core/types";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme as ExactFacilitator } from "@x402/svm/exact/facilitator";
 import { InMemoryPaymentChannelStorage, UptoSvmScheme as UptoFacilitator } from "@x402/svm/upto/facilitator";
-import { createApp, MAINNET_ASKS_PER_HOUR } from "../src/app.js";
+import { createApp, MAINNET_ASKS_PER_HOUR, MAX_BODY_BYTES } from "../src/app.js";
 import { MAINNET, NETWORK, PRODUCTS, USDC_DEVNET, USDC_MAINNET } from "../src/catalog.js";
 import { hourOf } from "../src/limits.js";
 import type { Db } from "../src/db.js";
@@ -154,6 +154,14 @@ describe("hosted MCP server", () => {
     expect(required.resource.url).toBe("mcp://tool/afriradar_fund");
     expect(required.accepts[0]).toMatchObject({ scheme: "exact", network: NETWORK, amount: String(PRODUCTS.fund.price), payTo: "CEunt52v96nuGTroYhigYhVQyZbDpaWZ69g6isL4BQT8" });
     expect(required.extensions.bazaar).toBeDefined();
+  });
+
+  it("refuses a request body over the cap before anything reads it, with or without a stated length", async () => {
+    const huge = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { pad: "x".repeat(MAX_BODY_BYTES) } });
+    expect((await json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: huge })).status).toBe(413);
+    const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(huge)); c.close(); } });
+    expect((await json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit)).status).toBe(413);
+    expect((await mcp({ jsonrpc: "2.0", id: 2, method: "tools/list" })).status).toBe(200); // ordinary calls pass
   });
 
   it("rejects an unknown tool and an unknown method", async () => {
