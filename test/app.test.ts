@@ -27,14 +27,18 @@ let db: Db;
 let demo: KeyPairSigner;
 let app: Awaited<ReturnType<typeof createApp>>;
 
-async function build(withDemo = true, withMainnet = false, siteWeek?: () => Promise<string | null>, extra: Partial<Parameters<typeof createApp>[0]> = {}) {
+async function build(withDemo = true, withMainnet = false, siteWeek?: () => Promise<string | null>, extra: Partial<Parameters<typeof createApp>[0]> = {}, calls?: string[]) {
   const feePayer = await generateKeyPairSigner();
   const svm = toFacilitatorSvmSigner(feePayer, { defaultRpcUrl: RPC });
   const networks = (withMainnet ? [NETWORK, MAINNET] : [NETWORK]) as Network[];
   const facilitator = new x402Facilitator()
     .register(networks, new ExactFacilitator(svm))
     .register(networks, new UptoFacilitator(svm, { channelStorage: new InMemoryPaymentChannelStorage() }));
-  const client: FacilitatorClient = { verify: (p, r) => facilitator.verify(p, r), settle: (p, r) => facilitator.settle(p, r), getSupported: async () => facilitator.getSupported() as SupportedResponse };
+  const client: FacilitatorClient = {
+    verify: (p, r) => (calls?.push("verify"), facilitator.verify(p, r)),
+    settle: (p, r) => (calls?.push("settle"), facilitator.settle(p, r)),
+    getSupported: async () => facilitator.getSupported() as SupportedResponse,
+  };
   return createApp({
     db,
     facilitator: client,
@@ -162,12 +166,50 @@ describe("hosted MCP server", () => {
 
   it("refuses a request body over the cap before anything reads it, with or without a stated length", async () => {
     const huge = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { pad: "x".repeat(MAX_BODY_BYTES) } });
-    const big = await json("/mcp", { method: "POST", headers: { "content-type": "application/json", origin: "https://example.com" }, body: huge });
+    const length = (s: string) => String(Buffer.byteLength(s));
+    // A stated length, as browsers and curl send: refused on the header alone.
+    const big = await json("/mcp", { method: "POST", headers: { "content-type": "application/json", "content-length": length(huge), origin: "https://example.com" }, body: huge });
     expect(big.status).toBe(413);
     expect(big.res.headers.get("access-control-allow-origin")).toBe("*"); // a browser can read the refusal
+    // No stated length: refused once the bytes read pass the cap.
     const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(huge)); c.close(); } });
     expect((await json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit)).status).toBe(413);
-    expect((await mcp({ jsonrpc: "2.0", id: 2, method: "tools/list" })).status).toBe(200); // ordinary calls pass
+    // Ordinary calls pass, with and without a stated length.
+    const small = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    expect((await json("/mcp", { method: "POST", headers: { "content-type": "application/json", "content-length": length(small) }, body: small })).status).toBe(200);
+    expect((await mcp({ jsonrpc: "2.0", id: 3, method: "tools/list" })).status).toBe(200);
+  });
+
+  it("answers 400, not a server error, when a body cannot be read", async () => {
+    const broken = new ReadableStream({ start(c) { c.error(new Error("Network connection lost.")); } });
+    const r = await json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: broken, duplex: "half" } as RequestInit);
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: "could not read the request body" });
+  });
+
+  it("refuses an oversized paid question before the payment is looked at", async () => {
+    const calls: string[] = [];
+    const paid = await build(true, false, undefined, {}, calls);
+    const body = JSON.stringify({ question: "x".repeat(MAX_BODY_BYTES) });
+    const signature = Buffer.from(JSON.stringify({ x402Version: 2, accepted: { network: NETWORK } })).toString("base64");
+    const res = await paid.fetch(new Request(`https://api.afriradar.com${PRODUCTS.ask.path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)), "PAYMENT-SIGNATURE": signature },
+      body,
+    }));
+    expect(res.status).toBe(413);
+    expect(calls).toEqual([]); // never verified, never settled
+  });
+
+  it("answers an MCP batch of up to 25 messages and refuses a longer one", async () => {
+    const batch = Array.from({ length: 26 }, (_, i) => ({ jsonrpc: "2.0", id: i, method: "tools/list" }));
+    const send = (b: object[]) => json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+    const long = await send(batch);
+    expect(long.status).toBe(400);
+    expect(long.body.error.code).toBe(-32600);
+    const ok = await send(batch.slice(0, 25));
+    expect(ok.status).toBe(200);
+    expect(ok.body).toHaveLength(25);
   });
 
   it("rejects an unknown tool and an unknown method", async () => {

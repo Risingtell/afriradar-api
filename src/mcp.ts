@@ -267,9 +267,12 @@ export function mountMcp(app: Hono, opts: { db: Db; resourceServer: x402Resource
     }
   }
 
+  // Each message in a batch runs at once and can read the database and the site: keep batches small.
+  const MAX_MCP_BATCH = 25;
   app.post("/mcp", async (c) => {
     const body = (await c.req.json().catch(() => undefined)) as Rpc | Rpc[] | undefined;
     if (!body || typeof body !== "object") return c.json(fail(null, -32700, "parse error: send a JSON-RPC message"), 400);
+    if (Array.isArray(body) && body.length > MAX_MCP_BATCH) return c.json(fail(null, -32600, `send at most ${MAX_MCP_BATCH} messages in one batch`), 400);
     const messages = Array.isArray(body) ? body : [body];
     // Notifications and client responses carry no id and get no reply.
     const visitor = visitorOf(c);

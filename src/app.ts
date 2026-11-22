@@ -349,11 +349,19 @@ export async function createApp(deps: Deps) {
 
   const app = new Hono();
   app.use("*", cors({ origin: "*", exposeHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"], allowHeaders: ["Content-Type", "PAYMENT-SIGNATURE", "X-PAYMENT", AGENT_WALLET_HEADER] }));
-  // Every body this API takes is small JSON (a question, an MCP call, an address). Refusing anything
-  // larger, even sent without a length, keeps a huge body from reaching any parser (GHSA-mrhx-c7xc-m3w5
-  // lets a large enough array exhaust the memory of the zod copy the x402 libraries still use). After
-  // cors, so the refusal carries the CORS headers a browser needs to read it.
-  app.use("*", bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: `request bodies are limited to ${MAX_BODY_BYTES / 1024} KB` }, 413) }));
+  // Every body this API takes is small JSON (a question, an MCP call, an address), and only POST routes
+  // read one. Refusing anything larger, even sent without a length, keeps a huge body from reaching any
+  // parser. POST only: the limiter rebuilds a request it had to read, which a GET or HEAD cannot be. A
+  // body that cannot be read (the client went away mid-upload) is the client's 400, not a server error.
+  // After cors, so a refusal carries the CORS headers a browser needs to read it.
+  const limit = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: `request bodies are limited to ${MAX_BODY_BYTES / 1024} KB` }, 413) });
+  app.post("*", async (c, next) => {
+    try {
+      return await limit(c, next);
+    } catch {
+      return c.json({ error: "could not read the request body" }, 400);
+    }
+  });
   app.onError((e, c) => {
     if (e instanceof AskError) return c.json({ error: e.message }, e.status);
     console.error(e);

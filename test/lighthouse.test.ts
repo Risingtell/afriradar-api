@@ -268,7 +268,8 @@ describe("a question deposit signed in Phantom (the upto channel open)", () => {
     await expect(verify()).resolves.toMatchObject({ channelId });
   });
 
-  it("lets the fee payer be read only by checks no other settlement can break, before or after the open", async () => {
+  // About a second alone; builds and checks many transactions, so give it room on a loaded run.
+  it("lets the fee payer be read only by checks no other settlement can break, before or after the open", { timeout: 20_000 }, async () => {
     for (const where of ["before", "after"] as const) {
       const place = (parts: Parts, g: Instruction) => (where === "before" ? [...parts.budget, g, parts.open, ...parts.memo] : [...parts.budget, parts.open, ...parts.memo, g]);
       for (let i = 0; i < SAFE_COUNT; i++) {
