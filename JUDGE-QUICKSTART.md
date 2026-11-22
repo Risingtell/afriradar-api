@@ -33,12 +33,12 @@ npx afriradar verify             # devnet
 
 1. Set Phantom, Solflare or Backpack to **devnet**.
 2. On the page choose **My wallet** and connect.
-3. If the wallet has no devnet USDC, press **Send me 0.25 test USDC**. You need no SOL: our facilitator pays every network fee.
+3. If the wallet has no devnet USDC, press **Send me 0.25 test USDC**. You need no SOL: on devnet our facilitator pays the test network fee.
 4. Press **Pay and run** and approve in the wallet.
 
 **What proves it:** the payer in the receipt and in the ledger is your own address.
 
-**With real USDC:** set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). The cheapest request costs $0.001 and you still need no SOL. The receipt and the ledger row are tagged mainnet. No USDC on Solana? See step 8.
+**With real USDC:** set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). The cheapest request costs $0.001 plus its network fee (about $0.002 in all), paid in USDC, so you still need no SOL and AfriRadar pays no fee for you. The receipt and the ledger row are tagged mainnet. No USDC on Solana? See step 8.
 
 ## 5. See the 402 yourself (30 seconds)
 

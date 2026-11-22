@@ -12,18 +12,18 @@ npx afriradar search coronation            # free: find fund ids
 npx afriradar wallet --new                 # creates ~/.afriradar/wallet.json, prints its address
 ```
 
-Send free devnet USDC to that address at [faucet.circle.com](https://faucet.circle.com) (choose Solana Devnet). You need no SOL: the API's facilitator pays the network fee.
+Send free devnet USDC to that address at [faucet.circle.com](https://faucet.circle.com) (choose Solana Devnet). You need no SOL: on devnet the API's facilitator pays the test network fee.
 
 ```bash
 npx afriradar top money-market --limit 5   # $0.002
 npx afriradar ask "Which dollar fund has the highest yield this year, and who manages it?"
 ```
 
-`ask` authorizes at most $0.05 on chain and settles only the itemized bill (base fee, each dataset the analyst read, AI tokens). The rest of the deposit goes back to your wallet in the same settlement.
+`ask` authorizes at most $0.05 on chain (on mainnet, plus its network fee) and settles only the itemized bill (base fee, each dataset the analyst read, AI tokens, and on mainnet the network fee). The rest of the deposit goes back to your wallet in the same settlement.
 
 ## Real USDC on mainnet
 
-Add `--mainnet` to any command. The same wallet file pays; put a few cents of USDC on Solana in it. You still need no SOL.
+Add `--mainnet` to any command. The same wallet file pays; put a few cents of USDC on Solana in it. You still need no SOL: the mainnet price includes your network fee, paid in USDC.
 
 ```bash
 npx afriradar wallet --mainnet             # the wallet's mainnet USDC balance
@@ -46,7 +46,7 @@ In the SDK, pass `network: "mainnet"` to `createAfriRadar`.
 | `ask "<q>"` | `POST /v1/ask` | metered, at most 0.05 |
 | `catalog`, `search`, `overview` | `GET /v1`, `/v1/search`, `/v1/overview` | free |
 
-A request that fails (unknown fund, bad input, AI unavailable) is never charged.
+A request that fails (unknown fund, bad input, AI unavailable) is never charged, except that on mainnet a question that fails after its deposit keeps its own network fee (about $0.005) and refunds the rest.
 
 ## SDK
 
@@ -62,7 +62,7 @@ const answer = await api.ask("Is Stanbic IBTC Money Market Fund above the median
 console.log(answer.data.answer, answer.data.bill);
 ```
 
-Any `@solana/kit` `TransactionSigner` works, so a browser wallet adapter can pay instead of a key file. `maxPerRequest` (default 0.05) and `budget` are enforced before anything is signed.
+Any `@solana/kit` `TransactionSigner` works, so a browser wallet adapter can pay instead of a key file. `maxPerRequest` (default 0.05 on devnet, 0.10 on mainnet where the network fee is added) and `budget` are enforced before anything is signed.
 
 ## MCP server for AI agents
 

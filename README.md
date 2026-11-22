@@ -41,7 +41,7 @@ Best Use of x402 on Solana. Each claim links to something you can check.
 | Meaningful integration of x402 and Solana | Both x402 schemes on Solana mainnet and devnet: `exact` for fixed-price data, `upto` on the Solana Foundation payment-channel program for the metered analyst. Our own facilitator runs in the Worker and pays every network fee on both networks. x402 also runs inside MCP (`@x402/mcp`), and every paid route declares x402 Bazaar discovery metadata. | Mainnet, real USDC: `exact` payment [3m6KcD...](https://explorer.solana.com/tx/3m6KcDXypfBW9TWsjzJTi2EFYHuWZSZzi2MWejF6ZdcNJjVTZCF7bUETnSeeuRg746wb2tbpN9VbVpdFKqopfX6D); `upto` deposit of $0.05 [SoC3i4...](https://explorer.solana.com/tx/SoC3i4vuaTZuNczNEW6o5H1NWBgWiDiBKK2AE4SWPFwK12MT3VRZQg92BwJn1EMeDGyV7nPdtUr9eYnRm3eHPXS) and settlement of 0.004328 with the rest refunded [5XmChR...](https://explorer.solana.com/tx/5XmChRiNPYeeAM4tudd2DRFfFKEUXBrnzt5gW28DLdBHqc3rADkipJrpBvKBpzEvrpknjXaVmiKP4tYtxp6PEr72). Devnet: visitor `exact` payment [61YK61...](https://explorer.solana.com/tx/61YK61tHb5VoxX9bBZEzDjQqVerCSAsYrk4iBRQagLY7y8xeEzchczrSkdNsHcUx4mibvCdVniVTYCMwnXbq13xD?cluster=devnet); visitor `upto` deposit [5Vu8mr...](https://explorer.solana.com/tx/5Vu8mrpyFQ7pYtwMn2wabdj4bJsZWSAm1Rv77ypBFVpo7vz47pfkMGi7Qbin41cYUKj5C8WguNGY2VMJotKc7cJY?cluster=devnet) and settlement of 0.00613 with the rest refunded [5mwM8r...](https://explorer.solana.com/tx/5mwM8rYYaBMjRHi14tSTeDuthvPSWhV6uz74QzbGKmSSRgY9ZkGThHBTHE3e7ATYj1MpgQ4tbyX5yfHQBR9vTv1p?cluster=devnet); paid MCP tool call [3JTxW7...](https://explorer.solana.com/tx/3JTxW71bRBWVb6BNDDHQpvfXddChS42PBHj2eohNYnyTfAVQD6STmzRqbYo9wxUtb4egoqy7W4WPMUBGkpfDUTZg?cluster=devnet) |
 | Reliability of the payment-to-access flow | Payment settles before data leaves; a failed handler cancels the payment; a late confirmation is checked on chain before refusing; wallets that add safety instructions while signing are accepted. An hourly monitor pays through the real flow and publishes the result. | [/v1/status](https://api.afriradar.com/v1/status); recount the ledger from the chain on the [demo page](https://api.afriradar.com/#ledger) or with `npx afriradar verify` |
 | A compelling use case beyond a basic demo | Real regulator data from two countries (SEC Nigeria weekly, CMA Kenya quarterly), an AI analyst that buys only the data it needs inside a cap Solana enforces, and tools for agents (npm SDK, CLI, local and hosted MCP). Outside users have paid from their own wallets. | [Try to overcharge a buyer](https://api.afriradar.com/#proof); visitor payments in the [ledger](https://api.afriradar.com/v1/payments) (`visitors`) |
-| Clear documentation and sensible handling of failed payments | This README, [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md), [/llms.txt](https://api.afriradar.com/llms.txt). An error is never charged; a failed answer refunds the whole deposit; a failed payment keeps the facilitator's reason in the public ledger. | A question that failed, refunded in full: deposit [5VPjyF...](https://explorer.solana.com/tx/5VPjyFCiVGQzyxBg4p3S3VH4dYLXc4Wy44yD9ehpDZ3ViNcRVLn2T5kMKsvJheAMDnDsMMs7Wp6NYDxRuY6cprMx?cluster=devnet), refund [TUuMwW...](https://explorer.solana.com/tx/TUuMwWGUeErAfuajz7KXVGj562k1tEwtudX9kmqkza7iVtQS5wHj4xfV6M4Y2cBGZ3KmRcbse99XgjxMjQAyzfy?cluster=devnet); [When a payment fails](#when-a-payment-fails) |
+| Clear documentation and sensible handling of failed payments | This README, [JUDGE-QUICKSTART.md](JUDGE-QUICKSTART.md), [/llms.txt](https://api.afriradar.com/llms.txt). An error is never charged; a failed answer refunds the whole deposit (on mainnet, less its own network fee); a failed payment keeps the facilitator's reason in the public ledger. | A question that failed, refunded in full: deposit [5VPjyF...](https://explorer.solana.com/tx/5VPjyFCiVGQzyxBg4p3S3VH4dYLXc4Wy44yD9ehpDZ3ViNcRVLn2T5kMKsvJheAMDnDsMMs7Wp6NYDxRuY6cprMx?cluster=devnet), refund [TUuMwW...](https://explorer.solana.com/tx/TUuMwWGUeErAfuajz7KXVGj562k1tEwtudX9kmqkza7iVtQS5wHj4xfV6M4Y2cBGZ3KmRcbse99XgjxMjQAyzfy?cluster=devnet); [When a payment fails](#when-a-payment-fails) |
 
 ## What a request looks like
 
@@ -53,7 +53,7 @@ GET /v1/kenya/unit-trusts
 <- 200 with the data, PAYMENT-RESPONSE header: { success, transaction, payer }
 ```
 
-The facilitator runs inside the same Cloudflare Worker as the API and pays the network fee, so a buyer needs USDC (real on mainnet, test on devnet) and no SOL.
+The facilitator runs inside the same Cloudflare Worker as the API, so a buyer needs USDC (real on mainnet, test on devnet) and no SOL. On mainnet the buyer still pays its own network fee: every mainnet price includes the Solana fee of that payment, in USDC at the live SOL price (Pyth), and the facilitator refuses any payment whose transaction would cost more in fees than its price covers. AfriRadar never pays a customer's fee. On devnet, which moves only test money, the facilitator pays the test fee.
 
 ## Products
 
@@ -143,7 +143,7 @@ Every paying wallet can be checked against Concordium's Agent Registry: is it bo
 The same Worker sells on both networks. Every 402 lists devnet first and mainnet second, so an x402 client picks the network its wallet is on. Each payment is stored with its network, and the ledger reads `?network=devnet|mainnet|all` (devnet by default).
 
 - **Real money stays deliberate.** The demo wallet and the hourly monitor pay on devnet only. On mainnet you always pay from your own wallet.
-- **One facilitator, two chains.** The facilitator pays network fees on both; it reaches mainnet through its own RPC, and the page signs through `/rpc/mainnet`.
+- **One facilitator, two chains.** It reaches mainnet through its own RPC, and the page signs through `/rpc/mainnet`. On mainnet the buyer's price covers the network fee (about $0.002 for a data request, $0.005 for a question at today's SOL price; `GET /v1` lists each product's mainnet price and fee).
 - **Guard before payment.** A question is validated before its deposit is taken, and mainnet questions are limited per visitor per hour, so a bad request is refused without charge.
 - **Recount it.** On the [demo page](https://api.afriradar.com/#ledger), choose **Mainnet** next to the recount buttons: your browser reads every mainnet payment from Solana and compares it with the ledger.
 
@@ -153,7 +153,7 @@ A cron runs at 41 minutes past every hour: the demo wallet buys one fund through
 
 ## When a payment fails
 
-- **The request fails** (unknown fund, bad input, AI unavailable): the handler answers 4xx or 5xx and the payment is cancelled. You are never charged for an error.
+- **The request fails** (unknown fund, bad input, AI unavailable): the handler answers 4xx or 5xx and the payment is cancelled. You are never charged for an error, except that on mainnet a question that fails after its deposit still pays its own network fee (about $0.005); the rest of the deposit is refunded.
 - **Settlement is broadcast but its confirmation is not seen** (often a rate-limited RPC): before refusing, the server reads the transaction from the chain. If the treasury received the money, the data is released and the ledger notes it was recovered.
 - **Still unresolved:** `GET /v1/redeem/:tx` releases the data for free once the chain shows the payment arrived.
 
@@ -168,7 +168,7 @@ OK: every payment the API claims is on chain.
 
 ## Try it
 
-**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. To pay real USDC, set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). You still need no SOL.
+**In a browser:** open https://api.afriradar.com, pick a product and press Run. The demo pays from a funded devnet wallet, so you need nothing. You can also connect your own Solana wallet (Solflare, Phantom or Backpack, set to devnet); if it has no devnet USDC, the page sends it 0.25 test USDC. To pay real USDC, set **Network** to **Mainnet** and connect a wallet that holds a few cents of USDC on Solana (Phantom, Solflare, Backpack or MetaMask). You still need no SOL: the mainnet price includes the network fee, paid in USDC.
 
 **From a terminal** (Node 22 or later), with the [`afriradar`](https://www.npmjs.com/package/afriradar) package on npm:
 
@@ -181,7 +181,7 @@ npx afriradar ask "Which Kenyan unit trust schemes grew fastest last quarter?"
 npx afriradar verify --mainnet             # free: recount the real-USDC payments from Solana
 ```
 
-Add `--mainnet` to any command to pay real USDC from the same wallet file. You still need no SOL.
+Add `--mainnet` to any command to pay real USDC from the same wallet file. You still need no SOL: the mainnet price includes the network fee, paid in USDC.
 
 The same package is an SDK (`createAfriRadar`) and an MCP server (`afriradar mcp`) so any MCP-capable agent can buy data with its own wallet and a budget. See [packages/afriradar](packages/afriradar).
 

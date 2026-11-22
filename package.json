@@ -9,21 +9,22 @@
     "test": "vitest run",
     "typecheck": "tsc -p .",
     "build:web": "esbuild web/main.ts --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --outfile=public/app.js",
-    "deploy": "npm run build:web && wrangler deploy"
+    "deploy": "node scripts/patch-x402-svm.mjs && npm run build:web && wrangler deploy",
+    "postinstall": "node scripts/patch-x402-svm.mjs"
   },
   "dependencies": {
     "@scure/base": "^2.4.0",
     "@solana-program/token": "^0.9.0",
     "@solana/kit": "^6.10.0",
-    "@x402/core": "^2.28.0",
-    "@x402/express": "^2.28.0",
-    "@x402/fetch": "^2.28.0",
-    "@x402/hono": "^2.28.0",
-    "@x402/mcp": "^2.28.0",
-    "@x402/svm": "^2.28.0",
+    "@x402/core": "2.28.0",
+    "@x402/express": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "@x402/hono": "2.28.0",
+    "@x402/mcp": "2.28.0",
+    "@x402/svm": "2.28.0",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
-    "hono": "^4.13.13"
+    "hono": "^4.13.19"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261012.1",

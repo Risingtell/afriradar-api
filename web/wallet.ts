@@ -33,8 +33,9 @@ export function onWalletsChange(cb: () => void): () => void {
 }
 
 // A modifying signer, because wallets may change the transaction while signing: Phantom and Solflare
-// append Lighthouse guard instructions that protect the user. The x402 facilitator allows up to three
-// Lighthouse (or Memo) instructions after the payment, so we hand the wallet's version back as signed
+// add Lighthouse guard instructions that protect the user (Phantom puts some before the payment, with a
+// data-size limit, and some after it). Our facilitator accepts up to 6 such guards after the compute
+// budget (the rules are in scripts/patch-x402-svm.mjs), so we hand the wallet's version back as signed
 // and let the facilitator judge it; anything it does not allow comes back as a clear "not charged".
 // `chain` is read at signing time, so one connection can pay on whichever network the visitor picks.
 export async function connect(wallet: Wallet, chain: () => WalletChain): Promise<{ account: WalletAccount; signer: TransactionModifyingSigner }> {

@@ -23,7 +23,7 @@ const NETS = {
 type Net = keyof typeof NETS;
 const explorer = (tx: string, n: Net) => `https://explorer.solana.com/tx/${tx}${n === "mainnet" ? "" : "?cluster=devnet"}`;
 
-type Catalog = { dataWeek: string; payTo: string; networks?: { id: string }[]; categories: { id: string; name: string }[]; products: { id: string; method: string; path: string; scheme: string; price: string; summary: string; example: string }[] };
+type Catalog = { dataWeek: string; payTo: string; networks?: { id: string }[]; categories: { id: string; name: string }[]; products: { id: string; method: string; path: string; scheme: string; price: string; mainnet?: { price: string; networkFee: string }; summary: string; example: string }[] };
 type LedgerRow = { tx: string | null; chain: Net; route: string; scheme: string; amount: string; usdc: number; payer: string | null; status: string; created_at: string; demo: boolean; monitor: boolean; explorer: string | null };
 type Totals = { payments: number; usdc: number };
 
@@ -33,7 +33,7 @@ let net: Net = "devnet";
 let own: { wallet: Wallet; signer: TransactionModifyingSigner; address: string } | null = null;
 const WALLET_HINT: Record<Net, string> = {
   devnet: $("wallet-line").innerHTML,
-  mainnet: 'Pays real USDC on Solana mainnet from your own Phantom, Solflare, Backpack or MetaMask. A data request costs $0.001 to $0.005; a question locks at most $0.05 and refunds what it does not use. You need no SOL: the facilitator pays the network fee. <span class="topup-hint">No USDC on Solana? <a href="#topup">Top up your wallet from another chain</a>.</span>',
+  mainnet: 'Pays real USDC on Solana mainnet from your own Phantom, Solflare, Backpack or MetaMask. A data request costs $0.001 to $0.005 plus its network fee (about $0.002), a question locks at most $0.05 plus its network fee (about $0.005) and refunds what it does not use. You need no SOL: you pay the network fee in USDC, inside the price. <span class="topup-hint">No USDC on Solana? <a href="#topup">Top up your wallet from another chain</a>.</span>',
 };
 
 // ---------- small safe markdown: escape first, then bold and pipe tables ----------
@@ -68,7 +68,7 @@ async function loadCatalog() {
     $("net-tag").textContent = "Solana mainnet + devnet";
   }
   $("price-grid").innerHTML = c.products
-    .map((p) => `<div><span class="tag ${p.scheme === "upto" ? "tag--devnet" : "tag--live"}">${esc(p.scheme === "upto" ? "metered, capped" : "fixed price")}</span><span class="price">${esc(p.price)}${p.scheme === "upto" ? " max" : ""}</span><p class="route">${esc(p.method)} ${esc(p.path)}</p><p>${esc(p.summary)}</p></div>`)
+    .map((p) => `<div><span class="tag ${p.scheme === "upto" ? "tag--devnet" : "tag--live"}">${esc(p.scheme === "upto" ? "metered, capped" : "fixed price")}</span><span class="price">${esc(p.price)}${p.scheme === "upto" ? " max" : ""}</span>${p.mainnet ? `<p class="route">Mainnet ${esc(p.mainnet.price)}${p.scheme === "upto" ? " max" : ""}, including your ${esc(p.mainnet.networkFee)} network fee</p>` : ""}<p class="route">${esc(p.method)} ${esc(p.path)}</p><p>${esc(p.summary)}</p></div>`)
     .join("");
   $<HTMLSelectElement>("category").innerHTML = c.categories.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
   const o = (await (await fetch("/v1/overview")).json()) as { week: string; funds: number; categories: { navNgn: number }[]; kenya?: { quarter: string | null; schemes: number; aumKes: number } };
@@ -276,13 +276,13 @@ async function showBalance(addr: string) {
     const bal = r.value.reduce((a, t) => a + t.account.data.parsed.info.tokenAmount.uiAmount, 0);
     if (n === "mainnet") {
       $("wallet-line").innerHTML = bal > 0
-        ? `Mainnet USDC balance: ${bal}. This pays real USDC. You need no SOL: the facilitator pays the network fee.`
+        ? `Mainnet USDC balance: ${bal}. This pays real USDC, network fee included. You need no SOL.`
         : `This wallet holds no USDC on Solana mainnet (address ${esc(addr)}). Add a little: $0.10 covers about 20 data requests.<span class="topup-hint"> <a href="#topup">Top it up from another chain</a>: USDT on BNB Chain or Tron, USDC on Base, and more.</span>`;
       $("faucet-box").innerHTML = "";
       return;
     }
     $("wallet-line").innerHTML = bal > 0
-      ? `Devnet USDC balance: ${bal}. You need no SOL: the facilitator pays the network fee.`
+      ? `Devnet USDC balance: ${bal}. You need no SOL: on devnet the facilitator pays the test network fee.`
       : `This wallet has no devnet USDC. Get some free at <a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> (Solana Devnet, address ${esc(addr)}), or from us below.`;
     renderFaucet(addr, bal);
   } catch {
@@ -340,12 +340,12 @@ function requestFor(): { product: string; path: string; init?: RequestInit; para
 type Settled = { success?: boolean; transaction?: string; amount?: string; payer?: string; errorReason?: string };
 
 function renderResult(data: unknown, receipt: Settled | null, payer: string, n: Net, agreed?: number) {
-  const d = data as { answer?: string; bill?: { base: number; data: { tool: string; price: number }[]; tokens: { prompt: number; completion: number; price: number }; total: number; ceiling: number }; week?: string; error?: string };
+  const d = data as { answer?: string; bill?: { base: number; data: { tool: string; price: number }[]; tokens: { prompt: number; completion: number; price: number }; total: number; ceiling: number; networkFee?: number; charged?: number }; week?: string; error?: string };
   let html = "";
   if (d?.answer && d.bill) {
     const b = d.bill;
     html += `<div class="answer">${renderAnswer(d.answer)}</div>`;
-    html += `<table class="bill"><tbody><tr><td>Base fee</td><td>${usdc(b.base)}</td></tr>${b.data.map((x) => `<tr><td>Data: ${esc(x.tool)}</td><td>${usdc(x.price)}</td></tr>`).join("")}<tr><td>AI tokens (${b.tokens.prompt + b.tokens.completion})</td><td>${usdc(b.tokens.price)}</td></tr><tr class="total"><td>Charged</td><td>${usdc(b.total)}</td></tr><tr class="refund"><td>Refunded from the ${usdc(b.ceiling)} deposit</td><td>${usdc(b.ceiling - b.total)}</td></tr></tbody></table>`;
+    html += `<table class="bill"><tbody><tr><td>Base fee</td><td>${usdc(b.base)}</td></tr>${b.data.map((x) => `<tr><td>Data: ${esc(x.tool)}</td><td>${usdc(x.price)}</td></tr>`).join("")}<tr><td>AI tokens (${b.tokens.prompt + b.tokens.completion})</td><td>${usdc(b.tokens.price)}</td></tr>${b.networkFee ? `<tr><td>Network fee (mainnet, yours)</td><td>${usdc(b.networkFee)}</td></tr>` : ""}<tr class="total"><td>Charged</td><td>${usdc(b.charged ?? b.total)}</td></tr><tr class="refund"><td>Refunded from the ${usdc(b.ceiling + (b.networkFee ?? 0))} deposit</td><td>${usdc(b.ceiling + (b.networkFee ?? 0) - (b.charged ?? b.total))}</td></tr></tbody></table>`;
   } else if (d?.error) {
     html += `<p class="answer">${esc(d.error)}</p>`;
   } else {
@@ -386,7 +386,9 @@ async function run() {
       const client = new x402Client()
         .register(NETS[n].caip2 as `${string}:${string}`, new ExactSvmScheme(own.signer, { rpcUrl }))
         .register(NETS[n].caip2 as `${string}:${string}`, new UptoSvmScheme(own.signer, { rpcUrl }))
-        .setSpendControls({ maxAmountPerPayment: "$0.05" });
+        // Devnet: the $0.05 question ceiling. Mainnet adds the buyer's network fee in USDC on top
+        // ($0.005 for a question today, more if SOL rises), so it needs headroom above $0.05.
+        .setSpendControls({ maxAmountPerPayment: n === "mainnet" ? "$0.10" : "$0.05" });
       let agreed: number | undefined;
       client.onAfterPaymentCreation(async ({ selectedRequirements }) => {
         agreed = Number(selectedRequirements.amount);

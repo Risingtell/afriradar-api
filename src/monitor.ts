@@ -56,7 +56,8 @@ export async function runMonitor(opts: { app: Hono; db: Db; signer: TransactionS
 async function label(db: Db, m: { path: string; payer: string; since: string; tx: string | null }) {
   if (m.tx) await db.run("UPDATE payments SET detail = 'monitor' WHERE tx = ? AND status = 'settled'", m.tx);
   if (m.path === "/v1/ask") {
-    await db.run("UPDATE payments SET detail = 'monitor' WHERE route = ? AND payer = ? AND status = 'deposit' AND created_at >= ? AND detail IS NULL", m.path, m.payer, m.since);
+    // A deposit recovered from chain carries a recovery note; it is still the monitor's.
+    await db.run("UPDATE payments SET detail = 'monitor' WHERE route = ? AND payer = ? AND status = 'deposit' AND created_at >= ? AND (detail IS NULL OR detail LIKE 'recovered from chain%')", m.path, m.payer, m.since);
   }
 }
 
