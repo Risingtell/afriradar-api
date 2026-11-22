@@ -9,7 +9,7 @@ import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@
 import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { ExactSvmScheme as ExactServer } from "@x402/svm/exact/server";
 import { UptoSvmScheme as UptoServer } from "@x402/svm/upto/server";
-import type { MessagePartialSigner, TransactionSigner } from "@solana/kit";
+import { getBase64Decoder, getBase64Encoder, getTransactionDecoder, type MessagePartialSigner, type TransactionSigner } from "@solana/kit";
 import { ask, AskError, questionProblem, type Llm } from "./agent/ask.js";
 import { CHAINS, chainOf, explorerUrl, MAINNET, NETWORK, PRODUCTS, USDC_DEVNET, usd, type ProductId } from "./catalog.js";
 import type { Db } from "./db.js";
@@ -71,6 +71,12 @@ export type Deps = {
 };
 
 export const MAINNET_ASKS_PER_HOUR = 30;
+/** Redeems per visitor per hour: each one reads the chain, up to 8 times. */
+export const REDEEMS_PER_HOUR = 30;
+/** How long after a payment it can be redeemed: far longer than a Solana transaction can take to land. */
+export const REDEEM_WINDOW_MS = 86_400_000;
+/** The detail of a payment the chain itself showed failed, as opposed to one only reported failed. */
+const CHAIN_FAILED = "chain says failed";
 
 /** What a payment header accepted; null when unreadable (the payment middleware then refuses it). */
 const paidOffer = (header: string): { network: string | null; amount: string | null } | null => {
@@ -119,11 +125,11 @@ export async function createApp(deps: Deps) {
   };
   const topup = deps.aurora ? topupService({ appKey: deps.aurora.appKey, fetch: deps.aurora.fetch, db, now, treasury: deps.treasury }) : undefined;
 
-  const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null }) =>
+  const record = (row: { id: string; tx: string | null; network: string; route: string; scheme: string; amount: string; ceiling?: string | null; payer?: string | null; status: string; detail?: string | null; createdAt?: string }) =>
     db.run(
       `INSERT INTO payments (id, tx, network, route, scheme, amount, ceiling, payer, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET status = excluded.status, amount = excluded.amount, detail = excluded.detail`,
-      row.id, row.tx, row.network, row.route, row.scheme, row.amount, row.ceiling ?? null, row.payer ?? null, row.status, row.detail ?? null, now().toISOString(),
+       ON CONFLICT (id) DO UPDATE SET status = excluded.status, amount = excluded.amount, detail = excluded.detail, payer = coalesce(payments.payer, excluded.payer)`,
+      row.id, row.tx, row.network, row.route, row.scheme, row.amount, row.ceiling ?? null, row.payer ?? null, row.status, row.detail ?? null, row.createdAt ?? now().toISOString(),
     );
 
   // Settled payments without the hourly monitor's own, plus the share paid by visitors' wallets
@@ -232,7 +238,10 @@ export async function createApp(deps: Deps) {
         return;
       }
       const broadcast = err.errorReason === "settlement_pending" || (err.errorMessage ?? "").startsWith("settlement_pending, but failed to persist");
+      const recovered = `recovered from chain after ${err.errorReason === "settlement_pending" ? "settlement_pending" : "a broadcast whose pending record was not saved"}`;
       if (!broadcast || !tx) {
+        // The chain already showed this transaction failed (an earlier attempt): that stays the record.
+        if (tx && (await db.first("SELECT 1 FROM payments WHERE tx = ? AND status = 'failed' AND detail = ?", tx, CHAIN_FAILED))) return;
         logRefused("settle", ctx.paymentPayload, ctx.requirements, err.message || err.errorReason || "");
         // err.message is "reason: explanation"; the reason code alone does not say what to fix.
         await record({ id: `${tx || crypto.randomUUID()}:failed`, tx: tx || null, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "failed", detail: err.message || err.errorReason });
@@ -241,15 +250,50 @@ export async function createApp(deps: Deps) {
       const chain = await readChainOn(network)(tx);
       // Landed, confirmed or failed: it cannot land again, so the buyer's next payment need not wait for it.
       if (chain.status !== "unknown") await deps.landed?.(ctx.paymentPayload as PaymentPayload, ctx.requirements as PaymentRequirements, ctx.phase).catch(() => undefined);
+      // A question's deposit opens a payment channel: the money goes into the channel, not to the
+      // treasury, so it has been received once its open transaction is confirmed. The facilitator
+      // checked that transaction (deposit, payee, mint) before sending it, so a confirmed one is that
+      // channel; the handler then answers and the claim settles from the channel as usual. A deposit
+      // whose send threw never gets here: it has no transaction to read (and the facilitator dropped
+      // its record of the channel), so it fails above.
+      if (ctx.requirements.scheme === "upto" && ctx.phase === "before-handler" && chain.status === "confirmed") {
+        const amount = String(ctx.requirements.amount);
+        await db.run("DELETE FROM payments WHERE tx = ? AND status = 'pending'", tx); // an earlier attempt's, now resolved
+        await record({ id: `${tx}:deposit`, tx, network, route, scheme: "upto", amount, ceiling: amount, payer: err.payer, status: "deposit", detail: recovered });
+        // The resource server's retry left the facilitator a pending note for this deposit. Clear it, or a
+        // replay of the same payment would be reconciled into a fresh deposit and the question answered
+        // again against a channel already claimed. (The library's own reconcile of such a note returns
+        // success without reading the channel either: the open was checked before it was sent.)
+        const open = (ctx.paymentPayload.payload as { openTransaction?: unknown }).openTransaction;
+        if (typeof open === "string") {
+          await depositNoteKey(ctx.requirements.network, open)
+            .then(async (k) => {
+              const { changes } = await db.run("DELETE FROM kv WHERE ns = 'pending' AND k = ?", k);
+              // Expected when the note was never saved; otherwise the library changed its key (see test/recovery.test.ts).
+              if (changes === 0) console.warn(JSON.stringify({ recovery: "no pending note found for this deposit", tx }));
+            })
+            .catch((e) => console.warn(JSON.stringify({ recovery: "could not clear the deposit's pending note", tx, error: String((e as Error)?.message ?? e) })));
+        }
+        return { recovered: true as const, result: { success: true, transaction: tx, network: ctx.requirements.network, payer: err.payer, amount } };
+      }
       const expected = BigInt(ctx.requirements.scheme === "upto" ? 1 : ctx.requirements.amount);
       if (chain.status === "confirmed" && chain.received >= expected) {
-        await record({ id: `${tx}:settled`, tx, network, route, scheme: ctx.requirements.scheme, amount: chain.received.toString(), payer: err.payer, status: "settled", detail: `recovered from chain after ${err.errorReason === "settlement_pending" ? "settlement_pending" : "a broadcast whose pending record was not saved"}` });
+        await db.run("DELETE FROM payments WHERE tx = ? AND status = 'pending'", tx); // an earlier attempt's, now resolved
+        await record({ id: `${tx}:settled`, tx, network, route, scheme: ctx.requirements.scheme, amount: chain.received.toString(), payer: err.payer, status: "settled", detail: recovered });
         return {
           recovered: true as const,
           result: { success: true, transaction: tx, network: ctx.requirements.network, payer: err.payer, amount: chain.received.toString() },
         };
       }
-      await record({ id: `${tx}:pending`, tx, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "pending", detail: ctx.requirements.scheme === "exact" ? `chain says ${chain.status}; redeem at /v1/redeem/${tx}` : `chain says ${chain.status}` });
+      if (chain.status === "failed") {
+        // Landed and failed: it charged nothing and never will. One failed row, in place of any pending one.
+        await db.run("DELETE FROM payments WHERE tx = ? AND status = 'pending'", tx);
+        await record({ id: `${tx}:failed`, tx, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "failed", detail: CHAIN_FAILED });
+        return;
+      }
+      // Already shown failed by the chain (an earlier attempt): a later "unknown" read changes nothing.
+      if (await db.first("SELECT 1 FROM payments WHERE tx = ? AND status = 'failed' AND detail = ?", tx, CHAIN_FAILED)) return;
+      await record({ id: `${tx}:pending`, tx, network, route, scheme: ctx.requirements.scheme, amount: "0", payer: err.payer, status: "pending", detail: ctx.requirements.scheme === "exact" && route.startsWith("/v1/") ? `chain says ${chain.status}; redeem at /v1/redeem/${tx}` : `chain says ${chain.status}` });
     });
   resourceServer.registerExtension(bazaarResourceServerExtension);
   await resourceServer.initialize();
@@ -344,15 +388,47 @@ export async function createApp(deps: Deps) {
       verify: `These rows are ${want === "all" ? "Solana devnet and mainnet" : chainOf(only).label} transactions (?network=${chains.map((ch) => ch.id).join("|")}|all). Recount them from the chain in your browser at https://api.afriradar.com/#ledger, or run \`npx afriradar verify\`.`,
     });
   });
-  // Paid but unconfirmed at reply time? Once the chain shows the money arrived, the data is released free.
+  // Paid but unconfirmed at reply time? Once the chain shows the money arrived, the data is released
+  // free, for a day after the payment (a Solana transaction lands within about a minute and a half, or
+  // never). Only for a payment whose data was never served: still pending, already redeemed (its buyer
+  // may ask again), or marked failed without the chain having shown it. A payment served when it was
+  // paid, as nearly every one in the public ledger was, cannot be redeemed. Not once only: transaction
+  // ids are public, so a first redeem by someone else must not use up the buyer's. The day also closes
+  // older ledger rows that an earlier version of this route marked "redeemed" on served payments.
   app.get("/v1/redeem/:tx", async (c) => {
     const tx = c.req.param("tx");
-    const row = await db.first<{ network: string; route: string; scheme: string; status: string }>("SELECT network, route, scheme, status FROM payments WHERE tx = ? ORDER BY created_at DESC", tx);
-    if (!row) return c.json({ error: "no payment with that transaction" }, 404);
+    const rows = await db.all<{ network: string; route: string; scheme: string; status: string; detail: string | null; payer: string | null; created_at: string }>(
+      "SELECT network, route, scheme, status, detail, payer, created_at FROM payments WHERE tx = ?",
+      tx,
+    );
+    if (!rows.length) return c.json({ error: "no payment with that transaction" }, 404);
+    const row = rows.find((r) => r.status === "pending") ?? rows.find((r) => r.status === "settled") ?? rows[0];
     if (row.scheme !== "exact" || !row.route.startsWith("/v1/")) return c.json({ error: "only data products can be redeemed; a metered /v1/ask is never charged unless it was answered" }, 400);
+    if (rows.some((r) => r.status === "settled" && r.detail !== "redeemed")) return c.json({ status: "settled", error: "this payment's data was served when it was paid" }, 409);
+    const paidAt = Math.min(...rows.map((r) => Date.parse(r.created_at)));
+    if (now().getTime() - paidAt > REDEEM_WINDOW_MS) return c.json({ error: "a payment can be redeemed for a day after it was made" }, 409);
+    if (rows.some((r) => r.status === "failed" && r.detail === CHAIN_FAILED)) return c.json({ status: "failed", error: "this payment failed and was never charged" }, 409);
+    if (!rows.some((r) => r.status === "pending" || r.status === "settled" || r.status === "failed")) {
+      return c.json({ status: row.status, error: "only a payment still pending can be redeemed" }, 409);
+    }
+    // Each redeem past here reads the chain, up to 8 times: keep anyone from spending our RPC quota through it.
+    const ip = c.req.header("cf-connecting-ip") ?? "local";
+    if ((await bump(db, "redeem", `ip:${ip}:${hourOf(now())}`, now())) > REDEEMS_PER_HOUR) return c.json({ error: `redeem runs ${REDEEMS_PER_HOUR} times an hour per visitor; try later` }, 429);
     const chain = await readChainOn(row.network)(tx);
-    if (chain.status !== "confirmed" || chain.received <= 0n) return c.json({ status: chain.status, message: "not confirmed on chain yet, try again shortly" }, 409);
-    await record({ id: `${tx}:settled`, tx, network: row.network, route: row.route, scheme: row.scheme, amount: chain.received.toString(), status: "settled", detail: "redeemed" });
+    if (chain.status === "failed") {
+      await db.run("DELETE FROM payments WHERE tx = ? AND status IN ('pending', 'failed')", tx);
+      await record({ id: `${tx}:failed`, tx, network: row.network, route: row.route, scheme: row.scheme, amount: "0", payer: row.payer, status: "failed", detail: CHAIN_FAILED });
+      return c.json({ status: "failed", error: "this payment failed and was never charged" }, 409);
+    }
+    if (chain.status === "confirmed" && chain.received <= 0n) return c.json({ status: "confirmed", error: "this transaction paid nothing to AfriRadar's treasury" }, 409);
+    // Unknown stays "try again": the chain read cannot tell a transaction that never landed from an RPC
+    // that did not answer, and closing a payment that did land would cost its buyer what they paid for.
+    if (chain.status !== "confirmed") return c.json({ status: chain.status, message: "not confirmed on chain yet, try again shortly" }, 409);
+    // Any amount above zero will do: the facilitator checked the transfer's amount before sending it, so
+    // a payment that landed paid its price. "Confirmed" is the commitment the facilitator settles at too.
+    // Dated at the payment, so the redeem window keeps running from the payment, not from this redeem.
+    await record({ id: `${tx}:settled`, tx, network: row.network, route: row.route, scheme: row.scheme, amount: chain.received.toString(), payer: row.payer, status: "settled", detail: "redeemed", createdAt: new Date(paidAt).toISOString() });
+    await db.run("DELETE FROM payments WHERE tx = ? AND status IN ('pending', 'failed')", tx); // the redeemed row keeps it redeemable
     return serveData(c, new URL(row.route, "https://x").pathname, new URL(row.route, "https://x").searchParams);
   });
 
@@ -480,3 +556,10 @@ export async function createApp(deps: Deps) {
 
 /** Default chain reader for production: JSON-RPC against the configured endpoint, for one network's USDC. */
 export const chainReader = (rpc: Parameters<typeof readPayment>[0], treasury: string, mint: string = USDC_DEVNET) => (sig: string) => readPayment(rpc, sig, treasury, mint);
+
+/** The upto facilitator's pending-note key for a deposit (@x402/svm 2.28.0: the base64 SHA-256 of the open's message). */
+export async function depositNoteKey(network: string, openTransaction: string): Promise<string> {
+  const { messageBytes } = getTransactionDecoder().decode(getBase64Encoder().encode(openTransaction));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(messageBytes)));
+  return `upto:deposit:${network}:${getBase64Decoder().decode(digest)}`;
+}

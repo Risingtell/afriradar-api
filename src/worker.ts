@@ -18,6 +18,7 @@ import { D1ChannelStorage, D1PendingStore } from "./facilitator/storage.js";
 import { kindsAt, runMonitor } from "./monitor.js";
 import { jsonRpc } from "./reconcile.js";
 import { feeGuard, LOCK_WAIT, solUsdReader, UPTO_OPEN_LIMITS } from "./netfee.js";
+import { sweepCounters } from "./limits.js";
 import { payerLock, sweepPayerLocks } from "./payerlock.js";
 import { watchingRefusals } from "./sends.js";
 
@@ -39,7 +40,6 @@ export type Env = {
 
 const MONITOR_CRON = "41 * * * *"; // wrangler.toml [triggers]
 const signerFrom = (json: string) => createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(json)));
-
 
 type Built = { app: Awaited<ReturnType<typeof createApp>>; upto: UptoFacilitator; db: Db; demoSigner?: KeyPairSigner; networks: Network[] };
 let built: Promise<Built> | undefined;
@@ -149,6 +149,7 @@ export default {
           console.error("kenya ingest failed", e); // Nigeria above is already stored; Kenya retries tomorrow
         }
         await sweepPayerLocks(db, at.getTime()).catch((e) => console.error("payer lock sweep failed", e));
+        await sweepCounters(db, at).catch((e) => console.error("rate-limit counter sweep failed", e));
         await cleanup(NETWORK as Network);
       })(),
     );
