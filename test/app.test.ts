@@ -162,7 +162,9 @@ describe("hosted MCP server", () => {
 
   it("refuses a request body over the cap before anything reads it, with or without a stated length", async () => {
     const huge = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { pad: "x".repeat(MAX_BODY_BYTES) } });
-    expect((await json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: huge })).status).toBe(413);
+    const big = await json("/mcp", { method: "POST", headers: { "content-type": "application/json", origin: "https://example.com" }, body: huge });
+    expect(big.status).toBe(413);
+    expect(big.res.headers.get("access-control-allow-origin")).toBe("*"); // a browser can read the refusal
     const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(huge)); c.close(); } });
     expect((await json("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit)).status).toBe(413);
     expect((await mcp({ jsonrpc: "2.0", id: 2, method: "tools/list" })).status).toBe(200); // ordinary calls pass
