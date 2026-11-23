@@ -8,7 +8,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "build:web": "esbuild web/main.ts --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --outfile=public/app.js",
+    "build:web": "esbuild web/main.ts --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --alias:zod=zod/v3 --outfile=public/app.js",
     "deploy": "node scripts/patch-x402-svm.mjs && npm run build:web && wrangler deploy",
     "postinstall": "node scripts/patch-x402-svm.mjs"
   },
@@ -41,5 +41,8 @@
   },
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "overrides": {
+    "zod": "^4.6.6"
+  }
 }
