@@ -64,6 +64,12 @@ console.log(answer.data.answer, answer.data.bill);
 
 Any `@solana/kit` `TransactionSigner` works, so a browser wallet adapter can pay instead of a key file. `maxPerRequest` (default 0.05 on devnet, 0.10 on mainnet where the network fee is added) and `budget` are enforced before anything is signed.
 
+If `npm audit` in your project flags zod (GHSA-mrhx-c7xc-m3w5): afriradar itself uses zod 4.6.6 or later, but the x402 payment libraries it depends on still pull in an older zod that they never use to parse anything. To clear the warning, add this to your project's package.json (it is the setup this package is tested with):
+
+```json
+"overrides": { "zod": "^4.6.6" }
+```
+
 ## MCP server for AI agents
 
 ```json
